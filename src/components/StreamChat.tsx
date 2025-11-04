@@ -499,7 +499,7 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
             role: 'assistant',
             timestamp: new Date(),
             isStreaming: true,
-            status: 'Preparing...'
+            status: 'Thinking...'
         };
 
         setMessages(prev => [...prev, assistantMessage]);
