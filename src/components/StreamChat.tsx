@@ -39,6 +39,7 @@ interface ChatInterfaceProps {
     userId: string; // Add userId prop
 }
 
+const ML_SERVER_URL = process.env.NEXT_PUBLIC_ML_SERVER_URL || 'http://localhost:8000/';
 const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [isLoadingChat, setIsLoadingChat] = useState(false);
@@ -174,7 +175,7 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
         const activeChatId = chatIdForSaving || currentChatId;
         console.log('Starting stream chat with userId:', userId, 'question:', question, 'messageId:', targetMessageId);
         try {
-            const response = await fetch('http://localhost:8000/api/ml/streamchat', {
+            const response = await fetch(`${ML_SERVER_URL}/api/ml/streamchat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
