@@ -29,9 +29,18 @@ type ChatMessage = {
     role: 'user' | 'assistant' | 'system';
     timestamp: Date;
     reasoning?: string;
-    sources?: Array<{ source: string; page?: number | string; chunk_id?: string; preview?: string }>;
+    sources?: Array<SourceData>;
     isStreaming?: boolean;
     status?: string;
+};
+
+type SourceData = {
+    chunk_id?: string;
+    chunk_text?: string;
+    label?: string;
+    page?: number | string;
+    pdf_name?: string;
+    score?: number;
 };
 
 interface ChatInterfaceProps {
@@ -52,8 +61,11 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
 
     const userProfileImage = user?.imageUrl;
 
+
+    console.log("This is a message", messages)
+
     // Helper function to save assistant messages
-    const saveAssistantMessage = useCallback(async (messageId: string, chatId: string, content: string, reasoning?: string, sources?: Array<{ source: string; page?: number | string; chunk_id?: string; preview?: string }>) => {
+    const saveAssistantMessage = useCallback(async (messageId: string, chatId: string, content: string, reasoning?: string, sources?: Array<SourceData>) => {
         if (!messageId || !chatId || !content) {
             console.log('Skipping save - missing required data for assistant message');
             return;
@@ -67,7 +79,7 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                 content,
                 role: 'assistant',
                 reasoning: reasoning || undefined,
-                sources: sources && sources.length > 0 ? sources : undefined
+                sources: sources || undefined
             });
             console.log('Assistant message saved successfully');
         } catch (error) {
@@ -93,8 +105,8 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                         role: 'assistant',
                         timestamp: new Date(),
                         sources: [
-                            { source: "Getting Started Guide", page: "#" },
-                            { source: "API Documentation", page: "#" }
+                            // { chunk_text: "Getting Started Guide", page: "#" },
+                            // { chunk_text: "API Documentation", page: "#" }
                         ]
                     }
                 ]);
@@ -265,7 +277,7 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                                 console.log('Stream completed. Full response:', data.full_response);
 
                                 let finalContent = '';
-                                let finalSources: Array<{ source: string; page?: number | string; chunk_id?: string; preview?: string }> = [];
+                                let finalSources: Array<SourceData> = [];
                                 let finalReasoning = '';
 
                                 setMessages(prev => {
@@ -558,15 +570,28 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                                         <SourcesContent>
                                             {message.sources.map((source, index) => (
                                                 <Source
-                                                    key={index}
-                                                    href={source.page?.toString() || '#'}
-                                                    title={`${source.source}${source.page ? ` - Page ${source.page}` : ''}`}
+                                                    key={source.chunk_id}
+                                                    title={`${source.pdf_name} - Page ${source.page} (Score: ${source.score?.toFixed(3)})`}
                                                 >
-                                                    {source.preview && (
-                                                        <div className="text-xs text-muted-foreground mt-1">
-                                                            {source.preview}
+                                                    <div className="space-y-2">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="inline-flex items-center px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">
+                                                                {source.label}
+                                                            </span>
+                                                            <span className="text-xs text-muted-foreground">
+                                                                Page {source.page}
+                                                            </span>
+                                                            <span className="text-xs text-muted-foreground">
+                                                                Score: {source.score?.toFixed(3)}
+                                                            </span>
                                                         </div>
-                                                    )}
+                                                        <div className="text-sm text-muted-foreground bg-gray-50 p-2 rounded border-l-2 border-blue-200">
+                                                            {source.chunk_text}
+                                                        </div>
+                                                        <div className="text-xs text-muted-foreground truncate">
+                                                            ID: {source.chunk_id}
+                                                        </div>
+                                                    </div>
                                                 </Source>
                                             ))}
                                         </SourcesContent>

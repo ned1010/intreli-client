@@ -9,18 +9,23 @@ const api = axios.create({
 })
 
 // Types
+
+//Source Type
+type SourceData = {
+    chunk_id?: string;
+    chunk_text?: string;
+    label?: string;
+    page?: number | string;
+    pdf_name?: string;
+    score?: number;
+};
 export interface ChatMessage {
     id: string;
     chatId: string;
     content: string;
     role: 'user' | 'assistant' | 'system';
     reasoning?: string;
-    sources?: Array<{
-        source: string;
-        page?: number | string;
-        chunk_id?: string;
-        preview?: string;
-    }>;
+    sources?: Array<SourceData>;
     status?: string;
     createdAt: string;
 }
@@ -80,7 +85,7 @@ export const messagesApi = {
         content: string;
         role: 'user' | 'assistant' | 'system';
         reasoning?: string;
-        sources?: Array<{ source: string; page?: number | string; chunk_id?: string; preview?: string }>;
+        sources?: Array<SourceData>;
         status?: string;
     }): Promise<{ success: boolean; message: ChatMessage }> => {
         const response = await api.post('/api/v1/messages', data);
@@ -91,7 +96,7 @@ export const messagesApi = {
     update: async (messageId: string, data: {
         content?: string;
         reasoning?: string;
-        sources?: Array<{ source: string; page?: number | string; chunk_id?: string; preview?: string }>;
+        sources?: Array<SourceData>;
         status?: string;
     }): Promise<{ success: boolean; message: ChatMessage }> => {
         const response = await api.put(`/api/v1/messages/${messageId}`, data);
@@ -121,7 +126,7 @@ export const apiUtils = {
     },
 
     // Save assistant message
-    saveAssistantMessage: async (chatId: string, messageId: string, content: string, reasoning?: string, sources?: Array<{ source: string; page?: number | string; chunk_id?: string; preview?: string }>): Promise<void> => {
+    saveAssistantMessage: async (chatId: string, messageId: string, content: string, reasoning?: string, sources?: Array<SourceData>): Promise<void> => {
         await messagesApi.save({
             messageId,
             chatId,
