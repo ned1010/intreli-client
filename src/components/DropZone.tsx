@@ -41,7 +41,7 @@ export function Dropzone({ className = "" }: DropzoneProps) {
             formData.append('userId', user?.id || '');
             formData.append('name', file.name);
 
-            const response = await api.post('/api/v1/document/upload-document', formData, {
+            const response = await api.post('/api/v1/documents/upload', formData, {
                 headers: { 'Content-Type': 'multipart/form-data', },
             });
             console.log('File upload data', response.data)

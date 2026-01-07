@@ -23,7 +23,7 @@ export function Documents() {
         queryKey: ['documents', user?.id],
         queryFn: async () => {
             console.log('Making API call to fetch documents for user:', user?.id);
-            const response = await api.get(`/api/v1/document/get-documents?userId=${user?.id}`);
+            const response = await api.get(`/api/v1/documents?userId=${user?.id}`);
             console.log('API Response:', response.data);
             console.log('Documents from API:', response.data.documents);
             return response.data.documents || [];
