@@ -286,7 +286,7 @@ const ChatInterface = ({ chatId }: ChatInterfaceProps) => {
                     <PromptInputTextarea
                         value={inputValue}
                         onChange={(e) => setInputValue(e.target.value)}
-                        placeholder="Query your knowledge base for information. I am ready to respond"
+                        placeholder="Type @ or @- to query a specific document, or ask questions to search across all documents"
                         disabled={isTyping}
                     />
                     <PromptInputToolbar className='flex justify-end'>

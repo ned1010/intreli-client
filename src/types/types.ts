@@ -11,6 +11,33 @@ export interface Document {
     createdAt: Date;
 }
 
+export interface SourceData {
+    label?: string;
+    pdf_name?: string;
+    page?: number | string;
+    chunk_id?: string;
+    score?: number;
+    chunk_text?: string;
+}
+
+export interface ChunkDetail {
+    chunk_id: string;
+    page: number;
+    score: number;
+    excerpt: string;
+    full_text?: string;
+    source_data?: SourceData;
+}
+
+export interface DocumentSummary {
+    document_id: string;
+    document_name: string;
+    summary: string;
+    relevance_score: number;
+    chunks_used: number;
+    chunks?: ChunkDetail[];
+}
+
 export interface Chat {
     id: number;
     pdfName: string;

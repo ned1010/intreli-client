@@ -12,12 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import type { ChatStatus } from 'ai';
 import { Loader2Icon, SendIcon, SquareIcon, XIcon } from 'lucide-react';
-import type {
-  ComponentProps,
-  HTMLAttributes,
-  KeyboardEventHandler,
-} from 'react';
-import { Children } from 'react';
+import React, { type ComponentProps, type HTMLAttributes, type KeyboardEventHandler, Children } from 'react';
 
 export type PromptInputProps = HTMLAttributes<HTMLFormElement>;
 
@@ -34,17 +29,151 @@ export const PromptInput = ({ className, ...props }: PromptInputProps) => (
 export type PromptInputTextareaProps = ComponentProps<typeof Textarea> & {
   minHeight?: number;
   maxHeight?: number;
+  onCursorPositionChange?: (position: number) => void;
+  onAutocompleteKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean;
+  documents?: Array<{ id: string | number; name: string }>; // For document tag detection
 };
 
-export const PromptInputTextarea = ({
+export const PromptInputTextarea = React.forwardRef<HTMLTextAreaElement, PromptInputTextareaProps>(({
   onChange,
   className,
   placeholder = 'What would you like to know?',
   minHeight = 48,
   maxHeight = 164,
+  onCursorPositionChange,
+  onAutocompleteKeyDown,
+  documents = [],
   ...props
-}: PromptInputTextareaProps) => {
+}, ref) => {
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
+    // Handle autocomplete keyboard events first
+    if (onAutocompleteKeyDown && onAutocompleteKeyDown(e)) {
+      return; // Autocomplete handled the event
+    }
+
+    // Handle backspace to delete entire document tags
+    if (e.key === 'Backspace' && !e.shiftKey && !e.ctrlKey && !e.metaKey && documents.length > 0) {
+      const textarea = e.currentTarget;
+      const cursorPos = textarea.selectionStart;
+      const value = textarea.value;
+
+      // Find document tags in the text
+      const tagRegex = /@-([^\s]+)/g;
+      let match;
+      const tags: Array<{ start: number; end: number; fullText: string }> = [];
+
+      while ((match = tagRegex.exec(value)) !== null) {
+        const tagName = match[1];
+        // Check if this tag matches an actual document
+        const matchingDoc = documents.find(doc => 
+          doc.name.toLowerCase() === tagName.toLowerCase() ||
+          doc.name.toLowerCase().includes(tagName.toLowerCase())
+        );
+
+        if (matchingDoc) {
+          tags.push({
+            start: match.index,
+            end: match.index + match[0].length,
+            fullText: match[0]
+          });
+        }
+      }
+
+      // Check if cursor is inside or at the end of a document tag
+      const tagAtCursor = tags.find(
+        tag => cursorPos > tag.start && cursorPos <= tag.end
+      );
+
+      if (tagAtCursor) {
+        e.preventDefault();
+        // Delete the entire tag
+        const beforeTag = value.substring(0, tagAtCursor.start);
+        const afterTag = value.substring(tagAtCursor.end);
+        const newValue = beforeTag + afterTag;
+        
+        // Update the value
+        if (onChange) {
+          const syntheticEvent = {
+            target: { value: newValue, selectionStart: tagAtCursor.start, selectionEnd: tagAtCursor.start }
+          } as React.ChangeEvent<HTMLTextAreaElement>;
+          onChange(syntheticEvent);
+        }
+
+        // Set cursor position after deletion
+        setTimeout(() => {
+          if (textarea) {
+            textarea.setSelectionRange(tagAtCursor.start, tagAtCursor.start);
+            if (onCursorPositionChange) {
+              onCursorPositionChange(tagAtCursor.start);
+            }
+          }
+        }, 0);
+        return;
+      }
+
+      // Check if cursor is right after a tag (delete the tag)
+      const tagBeforeCursor = tags.find(
+        tag => cursorPos === tag.end
+      );
+
+      if (tagBeforeCursor) {
+        e.preventDefault();
+        const beforeTag = value.substring(0, tagBeforeCursor.start);
+        const afterTag = value.substring(tagBeforeCursor.end);
+        const newValue = beforeTag + afterTag;
+        
+        if (onChange) {
+          const syntheticEvent = {
+            target: { value: newValue, selectionStart: tagBeforeCursor.start, selectionEnd: tagBeforeCursor.start }
+          } as React.ChangeEvent<HTMLTextAreaElement>;
+          onChange(syntheticEvent);
+        }
+
+        setTimeout(() => {
+          if (textarea) {
+            textarea.setSelectionRange(tagBeforeCursor.start, tagBeforeCursor.start);
+            if (onCursorPositionChange) {
+              onCursorPositionChange(tagBeforeCursor.start);
+            }
+          }
+        }, 0);
+        return;
+      }
+    }
+
+    // Update cursor position immediately for special characters like '@'
+    // This ensures trigger detection works as soon as '@' is typed
+    if (onCursorPositionChange) {
+      const currentPos = e.currentTarget.selectionStart;
+      let newPos = currentPos;
+      
+      // Calculate new cursor position based on key pressed
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Regular character - cursor moves forward
+        newPos = currentPos + 1;
+      } else if (e.key === 'Backspace' && !e.shiftKey) {
+        // Backspace - cursor moves back (if not handled above)
+        newPos = Math.max(0, currentPos - 1);
+      } else if (e.key === 'Delete') {
+        // Delete - cursor stays same
+        newPos = currentPos;
+      } else if (e.key === 'ArrowLeft') {
+        newPos = Math.max(0, currentPos - 1);
+      } else if (e.key === 'ArrowRight') {
+        newPos = Math.min(e.currentTarget.value.length, currentPos + 1);
+      }
+      
+      // Update cursor position immediately for trigger detection
+      if (newPos !== currentPos || e.key === '@' || e.key === '-') {
+        // Use requestAnimationFrame to ensure it happens after the key is processed
+        requestAnimationFrame(() => {
+          if (e.currentTarget) {
+            onCursorPositionChange(e.currentTarget.selectionStart);
+          }
+        });
+      }
+    }
+
     if (e.key === 'Enter') {
       if (e.shiftKey) {
         // Allow newline
@@ -60,8 +189,37 @@ export const PromptInputTextarea = ({
     }
   };
 
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    // Track cursor position immediately - this is critical for '@' detection
+    if (onCursorPositionChange) {
+      // Get cursor position immediately from the event
+      const cursorPos = e.target.selectionStart;
+      onCursorPositionChange(cursorPos);
+    }
+    onChange?.(e);
+  };
+
+  const handleSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+    // Track cursor position on selection change
+    if (onCursorPositionChange) {
+      onCursorPositionChange(e.currentTarget.selectionStart);
+    }
+  };
+
+  const handleClick = (e: React.MouseEvent<HTMLTextAreaElement>) => {
+    // Track cursor position on click
+    if (onCursorPositionChange) {
+      setTimeout(() => {
+        if (e.currentTarget) {
+          onCursorPositionChange(e.currentTarget.selectionStart);
+        }
+      }, 0);
+    }
+  };
+
   return (
     <Textarea
+      ref={ref}
       className={cn(
         'w-full resize-none rounded-none border-none p-3 shadow-none outline-none ring-0',
         'field-sizing-content max-h-[6lh] bg-transparent dark:bg-transparent',
@@ -69,15 +227,17 @@ export const PromptInputTextarea = ({
         className
       )}
       name="message"
-      onChange={(e) => {
-        onChange?.(e);
-      }}
+      onChange={handleChange}
+      onSelect={handleSelect}
       onKeyDown={handleKeyDown}
+      onClick={handleClick}
       placeholder={placeholder}
       {...props}
     />
   );
-};
+});
+
+PromptInputTextarea.displayName = 'PromptInputTextarea';
 
 export type PromptInputToolbarProps = HTMLAttributes<HTMLDivElement>;
 
