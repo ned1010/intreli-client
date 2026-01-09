@@ -42,7 +42,8 @@ export function Dropzone({ className = "" }: DropzoneProps) {
             formData.append('name', file.name);
 
             const response = await api.post('/api/v1/documents/upload', formData, {
-                headers: { 'Content-Type': 'multipart/form-data', },
+                headers: { 'Content-Type': 'multipart/form-data' },
+                timeout: 30000, // 30 seconds for uploads (S3 + DB operations)
             });
             console.log('File upload data', response.data)
             return response.data;
