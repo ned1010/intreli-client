@@ -522,6 +522,9 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
             return;
         }
 
+        // Disable the interface immediately to prevent multiple submissions
+        setIsTyping(true);
+
         const question = inputValue.trim();
         let activeChatId = currentChatId;
         console.log('Starting handleSubmit:', { question, activeChatId, currentChatId });
@@ -546,10 +549,12 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                     window.history.replaceState({}, '', `/chat/${activeChatId}`);
                 } else {
                     console.error('Failed to create chat:', result);
+                    setIsTyping(false);
                     return;
                 }
             } catch (error) {
                 console.error('Failed to create new chat:', error);
+                setIsTyping(false);
                 return;
             }
         } else {
@@ -571,6 +576,7 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                     if (!result.success) {
                         console.error('Failed to create chat with specific ID:', activeChatId);
                         // If we can't create the chat, we can't save messages - abort
+                        setIsTyping(false);
                         return;
                     }
                     console.log('Chat created with specific ID:', activeChatId);
@@ -591,11 +597,13 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
 
                     if (!result.success) {
                         console.error('Failed to create chat (fallback):', result);
+                        setIsTyping(false);
                         return;
                     }
                     console.log('Chat created successfully (fallback):', activeChatId);
                 } catch (createError) {
                     console.error('Failed to create chat in fallback:', createError);
+                    setIsTyping(false);
                     return;
                 }
             }
@@ -613,7 +621,6 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
 
         setMessages(prev => [...prev, userMessage]);
         setInputValue('');
-        setIsTyping(true);
 
         // Save user message to database
         if (activeChatId) {
@@ -832,7 +839,7 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                         }}
                         onAutocompleteKeyDown={handleAutocompleteKeyDown}
                         placeholder="Type @ or @- to query a specific document, or ask questions to search across all documents"
-                        disabled={isTyping && isLoadingChat}
+                        disabled={isTyping}
                         documents={documents}
                     />
                     <PromptInputToolbar className='flex justify-end'>

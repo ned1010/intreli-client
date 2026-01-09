@@ -6,20 +6,26 @@ import { useUser, UserButton } from '@clerk/nextjs';
 import { usePathname } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 
-interface ChatLayoutProps {
+interface AppLayoutProps {
     children: React.ReactNode;
 }
 
-export default function ChatLayout({ children }: ChatLayoutProps) {
+export default function AppLayout({ children }: AppLayoutProps) {
     const { isLoaded, isSignedIn, user } = useUser();
     const pathname = usePathname();
 
     // Determine page title and subtitle based on pathname
     const getPageInfo = () => {
-        if (pathname === '/chat') {
-            return { title: 'Chat', subtitle: 'AI-powered conversations' };
+        if (pathname.includes('/knowledge-base')) {
+            return { title: 'Knowledge Base', subtitle: 'Manage your documents and AI training data' };
         }
-        return { title: 'Chat', subtitle: 'AI-powered conversations' };
+        if (pathname.includes('/admin')) {
+            return { title: 'Admin Dashboard', subtitle: 'System administration and settings' };
+        }
+        if (pathname.includes('/billing')) {
+            return { title: 'Billing & Usage', subtitle: 'Manage your subscription and usage' };
+        }
+        return { title: 'Intreli', subtitle: 'AI-powered platform' };
     };
 
     if (!isLoaded) {
@@ -56,3 +62,4 @@ export default function ChatLayout({ children }: ChatLayoutProps) {
         </SidebarProvider>
     );
 }
+

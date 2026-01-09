@@ -1,9 +1,8 @@
 import { Calendar, Book, Inbox, MessageSquare, Search, Settings, DollarSign, LogOut, ChevronDown } from "lucide-react"
-import { ReactNode, useEffect, useState, useCallback } from "react"
-import { Button } from "@/components/ui/button"
-import { useRouter } from "next/navigation"
+import { ReactNode } from "react"
+import { useRouter, usePathname } from "next/navigation"
 import { nanoid } from "nanoid"
-import { chatApi } from "@/lib/axios"
+import { chatApi, Chat } from "@/lib/axios"
 import {
     Sidebar,
     SidebarContent,
@@ -18,6 +17,8 @@ import {
     SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { SignOutButton } from "@clerk/nextjs";
+import { ChatListItem } from "@/components/ChatListItem";
+import { useQuery } from "@tanstack/react-query";
 
 
 interface User {
@@ -26,12 +27,6 @@ interface User {
     emailAddresses?: Array<{ emailAddress: string }>;
 }
 
-interface Chat {
-    id: string;
-    title: string;
-    timestamp: string;
-    preview: string;
-}
 
 interface AppSidebarProps {
     user?: User;
@@ -48,17 +43,17 @@ const defaultApplicationItems = [
     },
     {
         title: "Knowledge Base",
-        url: "/chat/knowledge-base",
+        url: "/knowledge-base",
         icon: Book,
     },
     {
         title: "Admin Panel",
-        url: "/chat/admin",
+        url: "/admin",
         icon: Settings,
     },
     {
         title: "Billing & Plans",
-        url: "/chat/billing",
+        url: "/billing",
         icon: DollarSign,
     },
 ]
@@ -91,62 +86,32 @@ const defaultApplicationItems = [
 
 export function AppSidebar({ user, userButton, userId }: AppSidebarProps) {
     const router = useRouter();
-    const [chats, setChats] = useState<Chat[]>([]);
-    const [isLoadingChats, setIsLoadingChats] = useState(false);
+    const pathname = usePathname();
 
-    // Load user's chats
-    useEffect(() => {
-        const fetchChats = async () => {
-            if (!userId) return;
+    // Get current chatId from pathname
+    const currentChatId = pathname?.startsWith('/chat/') 
+        ? pathname.split('/chat/')[1]?.split('/')[0] || null
+        : null;
 
-            setIsLoadingChats(true);
-            try {
-                const result = await chatApi.getUserChats(userId);
-                if (result.success && result.chats) {
-                    const formattedChats = result.chats.map(chat => ({
-                        id: chat.id,
-                        title: chat.title,
-                        timestamp: new Date(chat.updatedAt).toLocaleDateString(),
-                        preview: 'Click to view conversation...'
-                    }));
-                    setChats(formattedChats);
-                } else {
-                    setChats([]);
-                }
-            } catch (error) {
-                console.error('Failed to fetch chats:', error);
-                setChats([]);
-            } finally {
-                setIsLoadingChats(false);
+    // Load user's chats with React Query
+    const {
+        data: chats = [],
+        isLoading: isLoadingChats,
+        refetch: refetchChats,
+    } = useQuery<Chat[]>({
+        queryKey: ['chats', userId],
+        queryFn: async () => {
+            if (!userId) return [];
+            const result = await chatApi.getUserChats(userId);
+            if (result.success && result.chats) {
+                return result.chats;
             }
-        };
-
-        fetchChats();
-    }, [userId]);
-
-    // Auto-refresh chats every 10 seconds to catch new chats
-    useEffect(() => {
-        if (!userId) return;
-
-        const interval = setInterval(async () => {
-            try {
-                const result = await chatApi.getUserChats(userId);
-                if (result.success && result.chats) {
-                    const formattedChats = result.chats.map(chat => ({
-                        id: chat.id,
-                        title: chat.title,
-                        timestamp: new Date(chat.updatedAt).toLocaleDateString(),
-                        preview: 'Click to view conversation...'
-                    }));
-                    setChats(formattedChats);
-                }
-            } catch (error) {
-                console.error('Failed to refresh chats:', error);
-            }
-        }, 3000); // Refresh every 3 seconds for faster updates
-
-        return () => clearInterval(interval);
-    }, [userId]);
+            return [];
+        },
+        enabled: !!userId,
+        staleTime: 3000, // Consider data fresh for 3 seconds
+        refetchInterval: 10000, // Refetch every 10 seconds
+    });
 
     const handleNewChat = () => {
         const newChatId = nanoid();
@@ -208,14 +173,13 @@ export function AppSidebar({ user, userButton, userId }: AppSidebarProps) {
                                 </SidebarMenuItem>
                             ) : chats.length > 0 ? (
                                 chats.map((chat) => (
-                                    <SidebarMenuItem key={chat.id}>
-                                        <SidebarMenuButton asChild>
-                                            <a href={`/chat/${chat.id}`}>
-                                                <MessageSquare />
-                                                <span>{chat.title}</span>
-                                            </a>
-                                        </SidebarMenuButton>
-                                    </SidebarMenuItem>
+                                    <ChatListItem
+                                        key={chat.id}
+                                        chat={chat}
+                                        userId={userId || ''}
+                                        isActive={currentChatId === chat.id}
+                                        onChatUpdate={() => refetchChats()}
+                                    />
                                 ))
                             ) : (
                                 <SidebarMenuItem>
