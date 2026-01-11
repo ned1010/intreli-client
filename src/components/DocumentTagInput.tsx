@@ -50,18 +50,18 @@ export function DocumentTagInput({
     while ((match = regex.exec(text)) !== null) {
       const tagName = match[1];
       // Only include tags that match actual document names
-      const matchingDoc = documents.find(doc => 
+      const matchingDoc = documents.find(doc =>
         doc.name.toLowerCase() === tagName.toLowerCase() ||
         doc.name.toLowerCase().includes(tagName.toLowerCase())
       );
-      
+
       if (matchingDoc) {
         tags.push({
           start: match.index,
           end: match.index + match[0].length,
           name: tagName,
           fullText: match[0],
-          documentId: matchingDoc.id
+          documentId: String(matchingDoc.id)
         });
       }
     }
@@ -161,7 +161,7 @@ export function DocumentTagInput({
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value;
     onChange(newValue);
-    
+
     if (onCursorPositionChange) {
       const pos = e.target.selectionStart;
       setCursorPosition(pos);
