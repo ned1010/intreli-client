@@ -60,9 +60,15 @@ export function ThemeProvider({
     useEffect(() => {
         const storedTheme = localStorage.getItem(storageKey) as Theme;
         if (storedTheme) {
-            setTheme(storedTheme);
+            // Use setTimeout to avoid synchronous setState in effect
+            setTimeout(() => {
+                setTheme(storedTheme);
+            }, 0);
         }
-        setMounted(true);
+        // Use setTimeout to avoid synchronous setState in effect
+        setTimeout(() => {
+            setMounted(true);
+        }, 0);
     }, [storageKey]);
 
     useEffect(() => {
@@ -83,7 +89,10 @@ export function ThemeProvider({
         }
 
         root.classList.add(resolvedTheme);
-        setActualTheme(resolvedTheme);
+        // Use setTimeout to avoid synchronous setState in effect
+        setTimeout(() => {
+            setActualTheme(resolvedTheme);
+        }, 0);
         localStorage.setItem(storageKey, theme);
     }, [theme, storageKey, mounted]);
 

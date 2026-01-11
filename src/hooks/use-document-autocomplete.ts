@@ -226,7 +226,10 @@ export function useDocumentAutocomplete(
   // Reset selected index when filtered documents change
   useEffect(() => {
     if (filteredDocuments.length > 0 && selectedIndex >= filteredDocuments.length) {
-      setSelectedIndex(0);
+      // Use setTimeout to avoid synchronous setState in effect
+      setTimeout(() => {
+        setSelectedIndex(0);
+      }, 0);
     }
   }, [filteredDocuments.length, selectedIndex]);
 

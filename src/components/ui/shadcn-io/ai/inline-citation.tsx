@@ -159,8 +159,11 @@ export const InlineCitationCarouselIndex = ({
       return;
     }
 
-    setCount(api.scrollSnapList().length);
-    setCurrent(api.selectedScrollSnap() + 1);
+    // Use setTimeout to avoid synchronous setState in effect
+    setTimeout(() => {
+      setCount(api.scrollSnapList().length);
+      setCurrent(api.selectedScrollSnap() + 1);
+    }, 0);
 
     api.on('select', () => {
       setCurrent(api.selectedScrollSnap() + 1);

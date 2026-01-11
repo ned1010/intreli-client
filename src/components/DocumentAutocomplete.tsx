@@ -211,7 +211,7 @@ export function DocumentAutocomplete({
       {documents.length === 0 ? (
         <div className="px-3 py-6 text-center text-sm text-muted-foreground">
           {triggerPosition?.query ? (
-            <>No documents match '{triggerPosition.query}'</>
+            <>No documents match &apos;{triggerPosition.query}&apos;</>
           ) : (
             <>No documents available</>
           )}

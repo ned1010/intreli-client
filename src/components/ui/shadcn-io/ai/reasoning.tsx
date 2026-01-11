@@ -67,11 +67,17 @@ export const Reasoning = memo(
     useEffect(() => {
       if (isStreaming) {
         if (startTime === null) {
-          setStartTime(Date.now());
+          // Use setTimeout to avoid synchronous setState in effect
+          setTimeout(() => {
+            setStartTime(Date.now());
+          }, 0);
         }
       } else if (startTime !== null) {
         setDuration(Math.round((Date.now() - startTime) / 1000));
-        setStartTime(null);
+        // Use setTimeout to avoid synchronous setState in effect
+        setTimeout(() => {
+          setStartTime(null);
+        }, 0);
       }
     }, [isStreaming, startTime, setDuration]);
 

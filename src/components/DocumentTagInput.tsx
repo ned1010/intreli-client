@@ -194,9 +194,9 @@ export function DocumentTagInput({
   // Expose textarea ref for external access (for autocomplete positioning)
   useEffect(() => {
     if (containerRef.current) {
-      (containerRef.current as any).textareaRef = textareaRef;
+      (containerRef.current as HTMLDivElement & { textareaRef?: React.RefObject<HTMLTextAreaElement | null> }).textareaRef = textareaRef;
     }
-  }, []);
+  }, [containerRef]);
 
   // Render text with inline chips for verified document tags only
   const renderTextWithChips = () => {

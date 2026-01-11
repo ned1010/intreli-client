@@ -90,17 +90,22 @@ export function DNAHelix({ className }: { className?: string }) {
 
 // Floating particles
 export function FloatingParticles({ className }: { className?: string }) {
+  // Generate random positions and durations once using useState with lazy initializer
+  const [particleStyles] = React.useState(() => {
+    return [...Array(6)].map((_, i) => ({
+      left: `${Math.random() * 100}%`,
+      animationDelay: `${i * 0.5}s`,
+      animationDuration: `${2 + Math.random() * 2}s`
+    }));
+  });
+
   return (
     <div className={cn("relative w-16 h-16 overflow-hidden", className)}>
-      {[...Array(6)].map((_, i) => (
+      {particleStyles.map((style, i) => (
         <div
           key={i}
           className="absolute w-1 h-1 bg-primary rounded-full animate-float"
-          style={{
-            left: `${Math.random() * 100}%`,
-            animationDelay: `${i * 0.5}s`,
-            animationDuration: `${2 + Math.random() * 2}s`
-          }}
+          style={style}
         />
       ))}
     </div>

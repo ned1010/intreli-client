@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -123,6 +123,22 @@ export default function FloatingActionButton({
     lg: "w-7 h-7"
   };
 
+  const toggleFAB = useCallback(() => {
+    if (isAnimating) return;
+
+    setIsAnimating(true);
+    setIsOpen(prev => !prev);
+
+    setTimeout(() => {
+      setIsAnimating(false);
+    }, 300);
+  }, [isAnimating]);
+
+  const handleActionClick = useCallback((action: QuickAction) => {
+    action.action();
+    setIsOpen(false);
+  }, []);
+
   // Close FAB when clicking outside and handle keyboard shortcuts
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -167,23 +183,7 @@ export default function FloatingActionButton({
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isOpen, actions]);
-
-  const toggleFAB = () => {
-    if (isAnimating) return;
-
-    setIsAnimating(true);
-    setIsOpen(prev => !prev);
-
-    setTimeout(() => {
-      setIsAnimating(false);
-    }, 300);
-  };
-
-  const handleActionClick = (action: QuickAction) => {
-    action.action();
-    setIsOpen(false);
-  };
+  }, [isOpen, actions, toggleFAB, handleActionClick]);
 
   const getActionPosition = (index: number) => {
     // Use vertical dropdown positioning to keep items on screen

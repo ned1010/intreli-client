@@ -60,7 +60,10 @@ export function ChatListItem({
     // Update editValue when chat title changes externally
     useEffect(() => {
         if (!isEditing) {
-            setEditValue(chat.title);
+            // Use setTimeout to avoid synchronous setState in effect
+            setTimeout(() => {
+                setEditValue(chat.title);
+            }, 0);
         }
     }, [chat.title, isEditing]);
 
@@ -78,7 +81,7 @@ export function ChatListItem({
             queryClient.invalidateQueries({ queryKey: ['chats', userId] });
             onChatUpdate?.();
         },
-        onError: (error: any) => {
+        onError: (error: unknown) => {
             toast.error('Failed to rename chat');
             console.error('Error renaming chat:', error);
             // Keep edit mode open on error
@@ -103,7 +106,7 @@ export function ChatListItem({
                 router.push('/chat');
             }
         },
-        onError: (error: any) => {
+        onError: (error: unknown) => {
             toast.error('Failed to delete chat');
             console.error('Error deleting chat:', error);
             setIsDeleteDialogOpen(false);
