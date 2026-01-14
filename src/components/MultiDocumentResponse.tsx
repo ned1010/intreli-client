@@ -2,22 +2,18 @@
 
 import { Badge } from '@/components/ui/badge';
 import { DocumentSummaryCard } from '@/components/ui/DocumentSummaryCard';
-import { Response } from '@/components/ui/shadcn-io/ai/response';
+import { AcademicSynthesisResponse } from '@/components/AcademicSynthesisResponse';
 import { cn } from '@/lib/utils';
 import { FileText } from 'lucide-react';
-import { DocumentSummary, ChunkDetail } from '@/types/types';
+import { DocumentSummary, ChunkDetail, CitationData, SourceData } from '@/types/types';
 
 interface MultiDocumentResponseProps {
     answer: string;
     documentSummaries: DocumentSummary[];
     totalDocuments: number;
     documentsAnalyzed: number;
-    sources?: Array<{
-        chunk_id?: string;
-        pdf_name?: string;
-        page?: number | string;
-        score?: number;
-    }>;
+    sources?: SourceData[];
+    citations?: CitationData[];
     onViewDocumentSources?: (documentId: string) => void;
 }
 
@@ -27,6 +23,7 @@ export function MultiDocumentResponse({
     totalDocuments,
     documentsAnalyzed,
     sources = [],
+    citations = [],
     onViewDocumentSources
 }: MultiDocumentResponseProps) {
     // Filter out documents with no meaningful summary
@@ -60,10 +57,13 @@ export function MultiDocumentResponse({
                 </Badge>
             </div>
 
-            {/* Main Answer */}
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-                <Response>{answer}</Response>
-            </div>
+            {/* Main Answer with Academic Synthesis */}
+            <AcademicSynthesisResponse
+                answer={answer}
+                citations={citations}
+                sources={sources}
+                responseType="all_documents"
+            />
 
             {/* Document cards (only for documents with relevant summaries) */}
             {filteredSummaries && filteredSummaries.length > 0 && (

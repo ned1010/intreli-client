@@ -19,6 +19,14 @@ type SourceData = {
     pdf_name?: string;
     score?: number;
 };
+export interface CitationData {
+    label: string;
+    pdf_name: string;
+    page: string;
+    chunk_id: string;
+    score: number;
+}
+
 export interface ChatMessage {
     id: string;
     chatId: string;
@@ -26,7 +34,20 @@ export interface ChatMessage {
     role: 'user' | 'assistant' | 'system';
     reasoning?: string;
     sources?: Array<SourceData>;
+    citations?: Array<CitationData>;
+    responseType?: 'single_document' | 'all_documents';
+    documentSummaries?: Array<{
+        document_id: string;
+        document_name: string;
+        summary: string;
+        relevance_score: number;
+        chunks_used: number;
+    }>;
+    totalDocuments?: number;
+    documentsAnalyzed?: number;
+    hasRelevantInformation?: boolean;
     status?: string;
+    intent?: 'factual' | 'list' | 'summary' | 'comparison' | 'analytical' | 'definition';
     createdAt: string;
 }
 
@@ -86,6 +107,18 @@ export const messagesApi = {
         role: 'user' | 'assistant' | 'system';
         reasoning?: string;
         sources?: Array<SourceData>;
+        citations?: Array<CitationData>;
+        responseType?: 'single_document' | 'all_documents';
+        documentSummaries?: Array<{
+            document_id: string;
+            document_name: string;
+            summary: string;
+            relevance_score: number;
+            chunks_used: number;
+        }>;
+        totalDocuments?: number;
+        documentsAnalyzed?: number;
+        hasRelevantInformation?: boolean;
         status?: string;
     }): Promise<{ success: boolean; message: ChatMessage }> => {
         const response = await api.post('/api/v1/messages', data);

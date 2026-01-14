@@ -24,7 +24,6 @@ import {
     ReasoningContent,
     ReasoningTrigger,
 } from '@/components/ui/shadcn-io/ai/reasoning';
-import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ui/shadcn-io/ai/source';
 import { Button } from '@/components/ui/button';
 import { MicIcon, PaperclipIcon, RotateCcwIcon } from 'lucide-react';
 import { nanoid } from 'nanoid';
@@ -262,19 +261,7 @@ const ChatInterface = ({ chatId }: ChatInterfaceProps) => {
                                     </Reasoning>
                                 </div>
                             )}
-                            {/* Sources */}
-                            {message.sources && message.sources.length > 0 && (
-                                <div className="ml-10">
-                                    <Sources>
-                                        <SourcesTrigger count={message.sources.length} />
-                                        <SourcesContent>
-                                            {message.sources.map((source, index) => (
-                                                <Source key={index} href={source.url} title={source.title} />
-                                            ))}
-                                        </SourcesContent>
-                                    </Sources>
-                                </div>
-                            )}
+                            {/* Sources section removed - REFERENCES section handles source display */}
                         </div>
                     ))}
                 </ConversationContent>

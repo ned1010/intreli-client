@@ -20,6 +20,16 @@ export interface SourceData {
     chunk_text?: string;
 }
 
+export interface CitationData {
+    label: string;        // e.g., "[1]"
+    pdf_name: string;
+    page: string;
+    chunk_id: string;
+    score: number;
+    relevance_text?: string;  // Merged/structured relevance snippet for display
+    chunk_text?: string;       // Raw chunk text (backward compatibility)
+}
+
 export interface ChunkDetail {
     chunk_id: string;
     page: number;

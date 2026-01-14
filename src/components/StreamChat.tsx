@@ -17,19 +17,18 @@ import {
     ReasoningContent,
     ReasoningTrigger,
 } from '@/components/ui/shadcn-io/ai/reasoning';
-import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ui/shadcn-io/ai/source';
 import { nanoid } from 'nanoid';
 import { type FormEventHandler, useCallback, useEffect, useState, useRef } from 'react';
 import { useUser } from '@clerk/nextjs';
 import { chatApi, messagesApi } from '@/lib/axios';
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/axios';
-import { Document } from '@/types/types';
+import { Document, CitationData, SourceData } from '@/types/types';
 import { useDocumentAutocomplete } from '@/hooks/use-document-autocomplete';
 import { DocumentAutocomplete } from '@/components/DocumentAutocomplete';
 import { MultiDocumentResponse } from '@/components/MultiDocumentResponse';
+import { MarkdownResponse } from '@/components/MarkdownResponse';
 import { Badge } from '@/components/ui/badge';
-import { Response } from '@/components/ui/shadcn-io/ai/response';
 import { FileText } from 'lucide-react';
 
 type ChatMessage = {
@@ -39,6 +38,7 @@ type ChatMessage = {
     timestamp: Date;
     reasoning?: string;
     sources?: Array<SourceData>;
+    citations?: Array<CitationData>;
     isStreaming?: boolean;
     status?: string;
     responseType?: 'single_document' | 'all_documents';
@@ -52,16 +52,9 @@ type ChatMessage = {
     totalDocuments?: number;
     documentsAnalyzed?: number;
     hasRelevantInformation?: boolean;
+    intent?: 'factual' | 'list' | 'summary' | 'comparison' | 'analytical' | 'definition';
 };
 
-type SourceData = {
-    chunk_id?: string;
-    chunk_text?: string;
-    label?: string;
-    page?: number | string;
-    pdf_name?: string;
-    score?: number;
-};
 
 interface ChatInterfaceProps {
     chatId: string | null;
@@ -71,7 +64,7 @@ interface ChatInterfaceProps {
 const ML_SERVER_URL = process.env.NEXT_PUBLIC_ML_SERVER_URL || 'http://localhost:8000/';
 const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
-    const [isLoadingChat, setIsLoadingChat] = useState(false);
+    const [, setIsLoadingChat] = useState(false);
     const [inputValue, setInputValue] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
@@ -129,37 +122,93 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
         debounceMs: 100 // Reduced debounce for faster response
     });
 
-    // Debug: Log documents and autocomplete state (moved after hook initialization)
-    useEffect(() => {
-        console.log('Autocomplete state:', {
-            isAutocompleteOpen,
-            documentsCount: documents.length,
-            filteredCount: filteredDocuments.length,
-            cursorPosition,
-            inputValue: inputValue.substring(0, 50),
-            triggerPosition
-        });
-    }, [isAutocompleteOpen, documents.length, filteredDocuments.length, cursorPosition, inputValue, triggerPosition]);
-
-    console.log("This is a message", messages)
-
     // Helper function to save assistant messages
-    const saveAssistantMessage = useCallback(async (messageId: string, chatId: string, content: string, reasoning?: string, sources?: Array<SourceData>) => {
+    const saveAssistantMessage = useCallback(async (
+        messageId: string,
+        chatId: string,
+        content: string,
+        reasoning?: string,
+        sources?: Array<SourceData>,
+        citations?: Array<CitationData>,
+        responseType?: 'single_document' | 'all_documents',
+        documentSummaries?: Array<{
+            document_id: string;
+            document_name: string;
+            summary: string;
+            relevance_score: number;
+            chunks_used: number;
+        }>,
+        totalDocuments?: number,
+        documentsAnalyzed?: number,
+        hasRelevantInformation?: boolean
+    ) => {
         if (!messageId || !chatId || !content) {
             console.log('Skipping save - missing required data for assistant message');
             return;
         }
 
         try {
-            console.log('Saving assistant message:', { messageId, chatId, contentLength: content.length });
-            await messagesApi.save({
+            console.log('Saving assistant message:', {
+                messageId,
+                chatId,
+                contentLength: content.length,
+                sourcesCount: sources?.length,
+                citationsCount: citations?.length
+            });
+
+            // Ensure citations is always an array when provided - never undefined
+            // This ensures axios sends the citations array to the server
+            const citationsToSave = Array.isArray(citations) ? citations : (citations ? [citations] : undefined);
+
+            // Ensure sources is always an array when provided - never undefined
+            // This ensures axios sends the sources array to the server
+            const sourcesToSave = Array.isArray(sources) ? sources : (sources ? [sources] : undefined);
+
+            // Prepare the payload - explicitly include citations and sources even if empty array
+            // Axios may strip undefined values, so we need to ensure they're always included when they exist
+            const payload: {
+                messageId: string;
+                chatId: string;
+                content: string;
+                role: 'assistant';
+                reasoning?: string;
+                sources?: Array<SourceData>;
+                citations?: Array<CitationData>;
+                responseType?: 'single_document' | 'all_documents';
+                documentSummaries?: Array<{
+                    document_id: string;
+                    document_name: string;
+                    summary: string;
+                    relevance_score: number;
+                    chunks_used: number;
+                }>;
+                totalDocuments?: number;
+                documentsAnalyzed?: number;
+                hasRelevantInformation?: boolean;
+            } = {
                 messageId,
                 chatId,
                 content,
                 role: 'assistant',
                 reasoning: reasoning || undefined,
-                sources: sources || undefined
-            });
+                responseType: responseType || undefined,
+                documentSummaries: documentSummaries || undefined,
+                totalDocuments: totalDocuments || undefined,
+                documentsAnalyzed: documentsAnalyzed || undefined,
+                hasRelevantInformation: hasRelevantInformation !== undefined ? hasRelevantInformation : undefined
+            };
+
+            // Always include sources if it's an array (even if empty) - don't let axios strip it
+            if (sourcesToSave !== undefined) {
+                payload.sources = sourcesToSave;
+            }
+
+            // Always include citations if it's an array (even if empty) - don't let axios strip it
+            if (citationsToSave !== undefined) {
+                payload.citations = citationsToSave;
+            }
+
+            await messagesApi.save(payload);
             console.log('Assistant message saved successfully');
         } catch (error) {
             console.error('Failed to save assistant message:', error);
@@ -200,19 +249,67 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                 const result = await chatApi.getChatWithMessages(chatId);
                 console.log('Chat API response:', result);
 
+
                 if (result.success) {
                     // Chat exists - check if it has messages
                     if (result.messages && result.messages.length > 0) {
+                        // Normalize citation labels to ensure consistent format [N]
+                        const normalizeCitationLabel = (label: string): string => {
+                            if (!label) return '';
+                            // Remove any existing brackets and add them back consistently
+                            const numStr = label.replace(/[\[\]]/g, '').trim();
+                            const num = parseInt(numStr, 10);
+                            if (!isNaN(num)) {
+                                return `[${num}]`;
+                            }
+                            return label; // Return original if can't parse
+                        };
+
                         // Convert API messages to component format
-                        const formattedMessages = result.messages.map(msg => ({
-                            id: msg.id,
-                            content: msg.content,
-                            role: msg.role === 'system' ? 'assistant' : msg.role, // Convert 'system' back to 'assistant' for display
-                            timestamp: new Date(msg.createdAt),
-                            reasoning: msg.reasoning,
-                            sources: msg.sources || [],
-                            status: msg.status
-                        }));
+                        const formattedMessages: ChatMessage[] = (result.messages as unknown as Array<{
+                            id: string;
+                            content: string;
+                            role: string;
+                            createdAt: string | Date;
+                            citations?: Array<CitationData>;
+                            responseType?: 'single_document' | 'all_documents';
+                            documentsAnalyzed?: number;
+                            intent?: ChatMessage['intent'];
+                            [key: string]: unknown;
+                        }>).map((msg) => {
+                            const normalizedCites = (msg.citations || []).map((cite: CitationData) => ({
+                                ...cite,
+                                label: normalizeCitationLabel(cite.label || '')
+                            }));
+
+                            // Default to 'single_document' if responseType is not set (for backward compatibility)
+                            const defaultResponseType = msg.responseType ||
+                                (msg.documentsAnalyzed && typeof msg.documentsAnalyzed === 'number' && msg.documentsAnalyzed > 1 ? 'all_documents' : 'single_document');
+
+                            return {
+                                id: msg.id,
+                                content: msg.content,
+                                role: (msg.role === 'system' ? 'assistant' : msg.role) as 'user' | 'assistant' | 'system',
+                                timestamp: new Date(msg.createdAt as string | Date),
+                                reasoning: msg.reasoning as string | undefined,
+                                sources: (msg.sources || []) as Array<SourceData>,
+                                // Normalize citation labels to ensure consistent format
+                                citations: normalizedCites,
+                                responseType: defaultResponseType,
+                                documentSummaries: msg.documentSummaries as Array<{
+                                    document_id: string;
+                                    document_name: string;
+                                    summary: string;
+                                    relevance_score: number;
+                                    chunks_used: number;
+                                }> | undefined,
+                                totalDocuments: msg.totalDocuments as number | undefined,
+                                documentsAnalyzed: msg.documentsAnalyzed as number | undefined,
+                                hasRelevantInformation: msg.hasRelevantInformation as boolean | undefined,
+                                status: msg.status as string | undefined,
+                                intent: msg.intent as ChatMessage['intent'] | undefined
+                            };
+                        });
                         console.log('Formatted messages:', formattedMessages);
                         setMessages(formattedMessages);
                     } else {
@@ -353,30 +450,85 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
 
                             } else if (data.type === 'done') {
                                 // Mark streaming as complete
-                                console.log('Stream completed. Full response:', data.full_response);
-                                console.log('Response type:', data.response_type);
-                                console.log('Document summaries:', data.document_summaries);
-
                                 let finalContent = '';
                                 let finalSources: Array<SourceData> = [];
+                                let finalCitations: Array<CitationData> = [];
                                 let finalReasoning = '';
+                                let finalResponseType: 'single_document' | 'all_documents' | undefined = undefined;
+                                let finalDocumentSummaries: Array<{
+                                    document_id: string;
+                                    document_name: string;
+                                    summary: string;
+                                    relevance_score: number;
+                                    chunks_used: number;
+                                }> | undefined = undefined;
+                                let finalTotalDocuments: number | undefined = undefined;
+                                let finalDocumentsAnalyzed: number | undefined = undefined;
+                                let finalHasRelevantInformation: boolean | undefined = undefined;
+
+                                // Normalize citation labels to ensure consistent format [N]
+                                const normalizeCitationLabel = (label: string): string => {
+                                    if (!label) return '';
+                                    // Remove any existing brackets and add them back consistently
+                                    const numStr = label.replace(/[\[\]]/g, '').trim();
+                                    const num = parseInt(numStr, 10);
+                                    if (!isNaN(num)) {
+                                        return `[${num}]`;
+                                    }
+                                    return label; // Return original if can't parse
+                                };
+
+                                // Normalize citations from 'done' event - this is the authoritative source
+                                const citationsFromDone = (data.citations || []).map((cite: CitationData) => ({
+                                    ...cite,
+                                    label: normalizeCitationLabel(cite.label || '')
+                                }));
+
+                                // Set finalCitations BEFORE setMessages to ensure it's available for saving
+                                finalCitations = citationsFromDone;
+
+                                // Set finalSources BEFORE setMessages to ensure it's available for saving
+                                // Use sources from 'done' event - this is the authoritative source
+                                // This ensures sources are properly set for both single and multi-document responses
+                                const sourcesFromDone = data.sources || [];
+                                finalSources = sourcesFromDone;
+
+                                // Get final content from data.full_response (authoritative source) or message state
+                                // This ensures we have content available for saving even if setMessages hasn't executed yet
+                                const contentForSave = data.full_response || '';
 
                                 setMessages(prev => {
+                                    // Get current message to access existing sources
+                                    const currentMessage = prev.find(msg => msg.id === targetMessageId);
+                                    const existingSources = currentMessage?.sources || [];
+
                                     const updated = prev.map(msg => {
                                         if (msg.id === targetMessageId) {
-                                            finalContent = msg.content;
-                                            finalSources = msg.sources || [];
+                                            // Use data.full_response if available, otherwise use msg.content
+                                            const messageContent = data.full_response || msg.content;
+                                            finalContent = messageContent;
+                                            // Use sources from done event if available, otherwise keep existing
+                                            const messageSources = sourcesFromDone.length > 0 ? sourcesFromDone : existingSources;
                                             finalReasoning = msg.reasoning || '';
 
                                             // Detect response type and store metadata
                                             const responseType = data.response_type ||
                                                 (data.documents_analyzed && data.documents_analyzed > 1 ? 'all_documents' : 'single_document');
 
+                                            finalResponseType = responseType;
+                                            finalDocumentSummaries = data.document_summaries || undefined;
+                                            finalTotalDocuments = data.total_documents || undefined;
+                                            finalDocumentsAnalyzed = data.documents_analyzed || undefined;
+                                            finalHasRelevantInformation = data.has_relevant_information !== undefined ? data.has_relevant_information : true;
+
                                             return {
                                                 ...msg,
+                                                content: messageContent, // Update content with full_response
                                                 isStreaming: false,
                                                 status: undefined,
                                                 responseType: responseType,
+                                                sources: messageSources, // Update sources from done event
+                                                citations: citationsFromDone, // Use normalized citations from done event
                                                 documentSummaries: data.document_summaries || undefined,
                                                 totalDocuments: data.total_documents || undefined,
                                                 documentsAnalyzed: data.documents_analyzed || undefined,
@@ -388,6 +540,9 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                                     return updated;
                                 });
 
+                                // Set finalContent from data.full_response BEFORE save check
+                                finalContent = contentForSave;
+
                                 setIsTyping(false);
                                 setStreamingMessageId(null);
 
@@ -396,11 +551,27 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                                     activeChatId,
                                     finalContent: finalContent?.length,
                                     targetMessageId,
-                                    hasContent: !!finalContent
+                                    hasContent: !!finalContent,
+                                    sourcesCount: finalSources?.length,
+                                    sources: finalSources,
+                                    citationsCount: finalCitations?.length,
+                                    finalCitations: finalCitations
                                 });
 
                                 if (activeChatId && finalContent && targetMessageId) {
-                                    await saveAssistantMessage(targetMessageId, activeChatId, finalContent, finalReasoning, finalSources);
+                                    await saveAssistantMessage(
+                                        targetMessageId,
+                                        activeChatId,
+                                        finalContent,
+                                        finalReasoning,
+                                        finalSources,
+                                        finalCitations,
+                                        finalResponseType,
+                                        finalDocumentSummaries,
+                                        finalTotalDocuments,
+                                        finalDocumentsAnalyzed,
+                                        finalHasRelevantInformation
+                                    );
                                 } else {
                                     console.log('Skipping save - missing required data:', {
                                         hasActiveChatId: !!activeChatId,
@@ -678,41 +849,45 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                                             <Loader size={14} />
                                             <span className="text-muted-foreground text-sm">Thinking...</span>
                                         </div>
-                                    ) : message.role === 'assistant' &&
+                                    ) : message.role === 'assistant' ? (
+                                        // Default to markdown + citations renderer for all assistant messages
                                         (message.responseType === 'all_documents' ||
                                             (message.documentsAnalyzed && message.documentsAnalyzed > 1)) ? (
-                                        // Multi-document response
-                                        <MultiDocumentResponse
-                                            answer={message.content}
-                                            documentSummaries={message.documentSummaries || []}
-                                            totalDocuments={message.totalDocuments || 0}
-                                            documentsAnalyzed={message.documentsAnalyzed || 0}
-                                            sources={message.sources}
-                                            onViewDocumentSources={(documentId) => {
-                                                // Filter sources by document ID
-                                                console.log('View sources for document:', documentId);
-                                            }}
-                                        />
-                                    ) : message.role === 'assistant' && message.responseType === 'single_document' ? (
-                                        // Single document response with indicator
-                                        <div className="space-y-2">
-                                            <div className="flex items-center gap-2">
-                                                <Badge variant="outline" className="text-xs">
-                                                    <FileText className="h-3 w-3 mr-1" />
-                                                    Single Document
-                                                </Badge>
-                                            </div>
-                                            <div className="prose prose-sm dark:prose-invert max-w-none">
-                                                <Response>{message.content}</Response>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        // User message or default
-                                        message.role === 'user' ? message.content : (
-                                            <div className="prose prose-sm dark:prose-invert max-w-none">
-                                                <Response>{message.content}</Response>
+                                            // Multi-document response
+                                            <MultiDocumentResponse
+                                                answer={message.content}
+                                                documentSummaries={message.documentSummaries || []}
+                                                totalDocuments={message.totalDocuments || 0}
+                                                documentsAnalyzed={message.documentsAnalyzed || 0}
+                                                sources={message.sources}
+                                                citations={message.citations}
+                                                onViewDocumentSources={(documentId) => {
+                                                    // Filter sources by document ID
+                                                    console.log('View sources for document:', documentId);
+                                                }}
+                                            />
+                                        ) : (
+                                            // Single document response (default) - use MarkdownResponse
+                                            <div className="space-y-2">
+                                                {message.responseType === 'single_document' && (
+                                                    <div className="flex items-center gap-2">
+                                                        <Badge variant="outline" className="text-xs">
+                                                            <FileText className="h-3 w-3 mr-1" />
+                                                            Single Document
+                                                        </Badge>
+                                                    </div>
+                                                )}
+                                                <MarkdownResponse
+                                                    answer={message.content}
+                                                    citations={message.citations || []}
+                                                    sources={message.sources}
+                                                    responseType={message.responseType || 'single_document'}
+                                                />
                                             </div>
                                         )
+                                    ) : (
+                                        // User message
+                                        message.content
                                     )}
                                 </MessageContent>
                                 <MessageAvatar
@@ -731,94 +906,7 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                                 </div>
                             )}
 
-                            {/* Sources - Hide if server indicates no relevant information found */}
-                            {message.hasRelevantInformation !== false && message.sources && message.sources.length > 0 ? (
-                                <div className="ml-10">
-                                    <Sources>
-                                        <SourcesTrigger count={message.sources.length} />
-                                        <SourcesContent>
-                                            {/* Group sources by document if multi-document response */}
-                                            {message.responseType === 'all_documents' && message.documentsAnalyzed && message.documentsAnalyzed > 1 ? (
-                                                (() => {
-                                                    // Group sources by document name
-                                                    const sourcesByDoc = message.sources.reduce((acc, source) => {
-                                                        const docName = source.pdf_name || 'Unknown';
-                                                        if (!acc[docName]) {
-                                                            acc[docName] = [];
-                                                        }
-                                                        acc[docName].push(source);
-                                                        return acc;
-                                                    }, {} as Record<string, typeof message.sources>);
-
-                                                    return Object.entries(sourcesByDoc).map(([docName, docSources]) => (
-                                                        <div key={docName} className="mb-4 last:mb-0">
-                                                            <h4 className="text-xs font-semibold text-foreground mb-2">
-                                                                {docName} ({docSources.length} source{docSources.length !== 1 ? 's' : ''})
-                                                            </h4>
-                                                            <div className="space-y-2 pl-4 border-l-2 border-muted">
-                                                                {docSources.map((source) => (
-                                                                    <Source
-                                                                        key={source.chunk_id}
-                                                                        title={`${source.pdf_name} - Page ${source.page} (Score: ${source.score?.toFixed(3)})`}
-                                                                    >
-                                                                        <div className="space-y-2">
-                                                                            <div className="flex items-center gap-2">
-                                                                                <span className="inline-flex items-center px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">
-                                                                                    {source.label}
-                                                                                </span>
-                                                                                <span className="text-xs text-muted-foreground">
-                                                                                    Page {source.page}
-                                                                                </span>
-                                                                                <span className="text-xs text-muted-foreground">
-                                                                                    Score: {source.score?.toFixed(3)}
-                                                                                </span>
-                                                                            </div>
-                                                                            <div className="text-sm text-muted-foreground bg-gray-50 p-2 rounded border-l-2 border-blue-200">
-                                                                                {source.chunk_text}
-                                                                            </div>
-                                                                            <div className="text-xs text-muted-foreground truncate">
-                                                                                ID: {source.chunk_id}
-                                                                            </div>
-                                                                        </div>
-                                                                    </Source>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    ));
-                                                })()
-                                            ) : (
-                                                // Single document or regular display
-                                                message.sources.map((source) => (
-                                                    <Source
-                                                        key={source.chunk_id}
-                                                        title={`${source.pdf_name} - Page ${source.page} (Score: ${source.score?.toFixed(3)})`}
-                                                    >
-                                                        <div className="space-y-2">
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="inline-flex items-center px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">
-                                                                    {source.label}
-                                                                </span>
-                                                                <span className="text-xs text-muted-foreground">
-                                                                    Page {source.page}
-                                                                </span>
-                                                                <span className="text-xs text-muted-foreground">
-                                                                    Score: {source.score?.toFixed(3)}
-                                                                </span>
-                                                            </div>
-                                                            <div className="text-sm text-muted-foreground bg-gray-50 p-2 rounded border-l-2 border-blue-200">
-                                                                {source.chunk_text}
-                                                            </div>
-                                                            <div className="text-xs text-muted-foreground truncate">
-                                                                ID: {source.chunk_id}
-                                                            </div>
-                                                        </div>
-                                                    </Source>
-                                                ))
-                                            )}
-                                        </SourcesContent>
-                                    </Sources>
-                                </div>
-                            ) : null}
+                            {/* Sources section removed - REFERENCES section handles source display */}
                         </div>
                     ))}
                 </ConversationContent>
@@ -861,19 +949,6 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                         onSelect={handleAutocompleteSelect}
                         onClose={closeAutocomplete}
                     />
-                )}
-
-                {/* Debug info - remove in production */}
-                {process.env.NODE_ENV === 'development' && (
-                    <div className="text-xs text-muted-foreground mt-2 p-2 bg-muted rounded">
-                        <div>Debug Info:</div>
-                        <div>Documents: {documents.length}</div>
-                        <div>Autocomplete Open: {isAutocompleteOpen ? 'Yes' : 'No'}</div>
-                        <div>Filtered: {filteredDocuments.length}</div>
-                        <div>Cursor: {cursorPosition}</div>
-                        <div>Input: &quot;{inputValue.substring(Math.max(0, cursorPosition - 10), cursorPosition + 10)}&quot;</div>
-                        <div>Trigger: {triggerPosition ? `@${triggerPosition.query}` : 'None'}</div>
-                    </div>
                 )}
             </div>
         </div>

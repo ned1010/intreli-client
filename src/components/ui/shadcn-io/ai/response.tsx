@@ -364,6 +364,22 @@ export const Response = memo(
         ? parseIncompleteMarkdown(children)
         : children;
 
+    // Allow callers to extend or override markdown components while preserving
+    // the base styling defined above. This is used by higher-level renderers
+    // (e.g. inline citation handling) to customize text rendering without
+    // reimplementing list/table/header styles.
+    const mergedOptions = options ?? {};
+    const customComponents = mergedOptions.components ?? {};
+    const mergedComponents: Options['components'] = {
+      ...components,
+      ...customComponents,
+    };
+
+    // Omit components from the options we pass through to avoid conflicts
+    // (we've already merged them above).
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { components: _omitComponents, ...restOptions } = mergedOptions;
+
     return (
       <div
         className={cn(
@@ -375,11 +391,11 @@ export const Response = memo(
         <HardenedMarkdown
           allowedImagePrefixes={allowedImagePrefixes ?? ['*']}
           allowedLinkPrefixes={allowedLinkPrefixes ?? ['*']}
-          components={components}
+          components={mergedComponents}
           defaultOrigin={defaultOrigin}
           rehypePlugins={[rehypeKatex]}
           remarkPlugins={[remarkGfm, remarkMath]}
-          {...options}
+          {...restOptions}
         >
           {parsedChildren}
         </HardenedMarkdown>
