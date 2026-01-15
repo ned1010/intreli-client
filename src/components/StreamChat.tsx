@@ -18,7 +18,7 @@ import {
     ReasoningTrigger,
 } from '@/components/ui/shadcn-io/ai/reasoning';
 import { nanoid } from 'nanoid';
-import { type FormEventHandler, useCallback, useEffect, useState, useRef } from 'react';
+import { type FormEventHandler, useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { useUser } from '@clerk/nextjs';
 import { chatApi, messagesApi } from '@/lib/axios';
 import { useQuery } from '@tanstack/react-query';
@@ -71,6 +71,9 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
     const [currentChatId, setCurrentChatId] = useState<string | null>(chatId);
     const [cursorPosition, setCursorPosition] = useState(0);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const savedMessageIdsRef = useRef<Set<string>>(new Set());
+    const fallbackTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+    const messageContentRef = useRef<Map<string, string>>(new Map());
 
     const { user } = useUser();
 
@@ -119,7 +122,7 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
             closeAutocomplete();
         },
         maxResults: 20,
-        debounceMs: 100 // Reduced debounce for faster response
+        debounceMs: 150 // Optimized debounce for better performance
     });
 
     // Helper function to save assistant messages
@@ -142,10 +145,19 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
         documentsAnalyzed?: number,
         hasRelevantInformation?: boolean
     ) => {
+        // Prevent duplicate saves
+        if (savedMessageIdsRef.current.has(messageId)) {
+            console.log('Skipping save - message already saved:', messageId);
+            return;
+        }
+
         if (!messageId || !chatId || !content) {
             console.log('Skipping save - missing required data for assistant message');
             return;
         }
+
+        // Mark as saved BEFORE the async call to prevent race conditions
+        savedMessageIdsRef.current.add(messageId);
 
         try {
             console.log('Saving assistant message:', {
@@ -212,6 +224,8 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
             console.log('Assistant message saved successfully');
         } catch (error) {
             console.error('Failed to save assistant message:', error);
+            // Remove from saved set on error so it can be retried
+            savedMessageIdsRef.current.delete(messageId);
         }
     }, []);
 
@@ -358,20 +372,84 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
         loadChatMessages();
     }, [chatId, messages.length, setCurrentChatId]);
 
+    // Helper function to extract document ID from question text
+    // Returns the first matching document ID if a document tag is found
+    const extractDocumentIdFromQuestion = useCallback((text: string, docs: Document[]): string | null => {
+        if (!text.trim() || !docs.length) return null;
+
+        const tagRegex = /@-([^\s]+)/g;
+        let match;
+
+        while ((match = tagRegex.exec(text)) !== null) {
+            const tagName = match[1];
+            // Find matching document (case-insensitive, supports partial matches)
+            const matchingDoc = docs.find(doc =>
+                doc.name.toLowerCase() === tagName.toLowerCase() ||
+                doc.name.toLowerCase().includes(tagName.toLowerCase())
+            );
+
+            if (matchingDoc) {
+                // Return document ID as string (ML server expects string)
+                return String(matchingDoc.id);
+            }
+        }
+
+        return null;
+    }, []);
+
+    // Helper function to check if a question contains a document tag
+    const hasDocumentTag = useCallback((text: string, docs: Document[]): boolean => {
+        if (!text.trim()) return false;
+
+        const tagRegex = /@-([^\s]+)/g;
+        let match;
+
+        while ((match = tagRegex.exec(text)) !== null) {
+            const tagName = match[1];
+            // Check if this tag matches an actual document
+            const matchingDoc = docs.find(doc =>
+                doc.name.toLowerCase() === tagName.toLowerCase() ||
+                doc.name.toLowerCase().includes(tagName.toLowerCase())
+            );
+
+            if (matchingDoc) {
+                return true;
+            }
+        }
+
+        return false;
+    }, []);
+
     const handleStreamChat = useCallback(async (question: string, messageId?: string, chatIdForSaving?: string) => {
         const targetMessageId = messageId || streamingMessageId;
         const activeChatId = chatIdForSaving || currentChatId;
-        console.log('Starting stream chat with userId:', userId, 'question:', question, 'messageId:', targetMessageId);
+
+        // Extract document ID from question if document tag is present
+        const documentId = extractDocumentIdFromQuestion(question, documents);
+
+        console.log('Starting stream chat with userId:', userId, 'question:', question, 'messageId:', targetMessageId, 'documentId:', documentId);
         try {
+            // Build request payload - include documentId if found
+            const requestPayload: {
+                question: string;
+                userId: string;
+                documentId?: string;
+            } = {
+                question,
+                userId
+            };
+
+            // Include documentId if we successfully extracted it
+            if (documentId) {
+                requestPayload.documentId = documentId;
+            }
+
             const response = await fetch(`${ML_SERVER_URL}/api/ml/streamchat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    question,
-                    userId
-                })
+                body: JSON.stringify(requestPayload)
             });
 
             console.log('Response status:', response.status);
@@ -389,7 +467,9 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
 
             while (true) {
                 const { done, value } = await reader.read();
-                if (done) break;
+                if (done) {
+                    break;
+                }
 
                 const chunk = decoder.decode(value);
                 const lines = chunk.split('\n');
@@ -418,14 +498,22 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                             } else if (data.type === 'token') {
                                 // Append token to current message
                                 console.log('Received token:', data.content);
+
+                                // Use ref to track latest content and prevent stale closure issues
+                                if (!targetMessageId) return;
+                                const currentContent = messageContentRef.current.get(targetMessageId) || '';
+                                const newContent = currentContent + data.content;
+                                messageContentRef.current.set(targetMessageId, newContent);
+
                                 setMessages(prev => {
                                     const updated = prev.map(msg => {
                                         if (msg.id === targetMessageId) {
-                                            const newContent = msg.content + data.content;
-                                            console.log('Updating message ID:', msg.id, 'New content length:', newContent.length);
+                                            // Use ref content to ensure we have the latest, not stale state
+                                            const contentToUse = messageContentRef.current.get(targetMessageId) || msg.content;
+                                            console.log('Updating message ID:', msg.id, 'New content length:', contentToUse.length);
                                             return {
                                                 ...msg,
-                                                content: newContent,
+                                                content: contentToUse,
                                                 isStreaming: true,
                                                 status: undefined
                                             };
@@ -497,10 +585,21 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                                 // This ensures we have content available for saving even if setMessages hasn't executed yet
                                 const contentForSave = data.full_response || '';
 
+                                // Update ref with final content
+                                if (targetMessageId && contentForSave) {
+                                    messageContentRef.current.set(targetMessageId, contentForSave);
+                                }
+
                                 setMessages(prev => {
                                     // Get current message to access existing sources
                                     const currentMessage = prev.find(msg => msg.id === targetMessageId);
                                     const existingSources = currentMessage?.sources || [];
+
+                                    // Find the previous user message to check if it had a document tag
+                                    const currentIndex = prev.findIndex(msg => msg.id === targetMessageId);
+                                    const previousUserMessage = currentIndex > 0 ? prev[currentIndex - 1] : null;
+                                    const userQuestion = previousUserMessage?.role === 'user' ? previousUserMessage.content : '';
+                                    const isAllDocumentsQuery = !hasDocumentTag(userQuestion, documents);
 
                                     const updated = prev.map(msg => {
                                         if (msg.id === targetMessageId) {
@@ -512,8 +611,14 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                                             finalReasoning = msg.reasoning || '';
 
                                             // Detect response type and store metadata
-                                            const responseType = data.response_type ||
+                                            // If querying all documents (no document tag), force all_documents mode
+                                            let responseType = data.response_type ||
                                                 (data.documents_analyzed && data.documents_analyzed > 1 ? 'all_documents' : 'single_document');
+
+                                            // Override to all_documents if user is querying all documents
+                                            if (isAllDocumentsQuery) {
+                                                responseType = 'all_documents';
+                                            }
 
                                             finalResponseType = responseType;
                                             finalDocumentSummaries = data.document_summaries || undefined;
@@ -545,6 +650,15 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
 
                                 setIsTyping(false);
                                 setStreamingMessageId(null);
+
+                                // Cancel fallback timeout since we're saving from 'done' event
+                                if (targetMessageId) {
+                                    const fallbackTimeout = fallbackTimeoutRef.current.get(targetMessageId);
+                                    if (fallbackTimeout) {
+                                        clearTimeout(fallbackTimeout);
+                                        fallbackTimeoutRef.current.delete(targetMessageId);
+                                    }
+                                }
 
                                 // Save assistant message to database
                                 console.log('Attempting to save message:', {
@@ -610,7 +724,7 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
             console.error('Stream error:', error);
             const errorMessage = error instanceof Error ? error.message : 'Failed to get response. Please try again.';
             setMessages(prev => prev.map(msg => {
-                if (msg.id === streamingMessageId) {
+                if (streamingMessageId && msg.id === streamingMessageId) {
                     return {
                         ...msg,
                         content: `Error: ${errorMessage}`,
@@ -627,7 +741,19 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
         // Fallback: Ensure assistant message is saved even if stream didn't complete properly
         //No error of assistant message not being saved
         if (targetMessageId && activeChatId) {
-            setTimeout(async () => {
+            // Clear any existing timeout for this message
+            const existingTimeout = fallbackTimeoutRef.current.get(targetMessageId);
+            if (existingTimeout) {
+                clearTimeout(existingTimeout);
+            }
+
+            const timeoutId = setTimeout(async () => {
+                // Check if already saved before proceeding
+                if (savedMessageIdsRef.current.has(targetMessageId)) {
+                    fallbackTimeoutRef.current.delete(targetMessageId);
+                    return;
+                }
+
                 // Get the current message from state
                 setMessages(currentMessages => {
                     const assistantMessage = currentMessages.find(msg => msg.id === targetMessageId);
@@ -641,11 +767,14 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                             assistantMessage.sources
                         );
                     }
+                    fallbackTimeoutRef.current.delete(targetMessageId);
                     return currentMessages;
                 });
             }, 1000); // Wait 1 second to ensure state is updated
+
+            fallbackTimeoutRef.current.set(targetMessageId, timeoutId);
         }
-    }, [userId, streamingMessageId, currentChatId, saveAssistantMessage]);
+    }, [userId, streamingMessageId, currentChatId, saveAssistantMessage, hasDocumentTag, documents, extractDocumentIdFromQuestion]);
 
     // Helper function to check if input has actual question text (not just document tags)
     const hasQuestionText = useCallback((text: string, docs: Document[]): boolean => {
@@ -679,6 +808,11 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
         return cleanedText.trim().length > 0;
     }, []);
 
+    // Memoize hasQuestionText result to prevent recalculation on every render
+    const hasQuestionTextResult = useMemo(() => {
+        return hasQuestionText(inputValue, documents);
+    }, [inputValue, documents, hasQuestionText]);
+
     const handleSubmit: FormEventHandler<HTMLFormElement> = useCallback(async (event) => {
         event.preventDefault();
 
@@ -688,7 +822,7 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
         }
 
         // Check if there's actual question text (not just document tags)
-        if (!hasQuestionText(inputValue, documents)) {
+        if (!hasQuestionTextResult) {
             console.log('Submit blocked: Only document tags, no question text');
             return;
         }
@@ -823,12 +957,16 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
         };
 
         setMessages(prev => [...prev, assistantMessage]);
+        // Initialize ref for new streaming message
+        if (assistantMessage.id) {
+            messageContentRef.current.set(assistantMessage.id, assistantMessage.content);
+        }
         setStreamingMessageId(targetMessageId);
 
         // Start streaming with the specific message ID and chat ID
         console.log('About to start streaming:', { question, targetMessageId, activeChatId });
         handleStreamChat(question, targetMessageId, activeChatId);
-    }, [inputValue, isTyping, handleStreamChat, currentChatId, userId, user, documents, hasQuestionText]);
+    }, [inputValue, isTyping, handleStreamChat, currentChatId, userId, user, hasQuestionTextResult]);
 
     return (
         <div className="flex w-full h-full flex-col overflow-hidden border bg-background">
@@ -850,9 +988,21 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                                             <span className="text-muted-foreground text-sm">Thinking...</span>
                                         </div>
                                     ) : message.role === 'assistant' ? (
-                                        // Default to markdown + citations renderer for all assistant messages
-                                        (message.responseType === 'all_documents' ||
-                                            (message.documentsAnalyzed && message.documentsAnalyzed > 1)) ? (
+                                        // Determine if this is an all-documents query by checking the previous user message
+                                        (() => {
+                                            const messageIndex = messages.findIndex(m => m.id === message.id);
+                                            const previousUserMessage = messageIndex > 0 ? messages[messageIndex - 1] : null;
+                                            const userQuestion = previousUserMessage?.role === 'user' ? previousUserMessage.content : '';
+                                            const isAllDocumentsQuery = !hasDocumentTag(userQuestion, documents);
+
+                                            // Show multi-document response if:
+                                            // 1. responseType is 'all_documents', OR
+                                            // 2. documentsAnalyzed > 1, OR
+                                            // 3. user is querying all documents (no document tag)
+                                            return message.responseType === 'all_documents' ||
+                                                (message.documentsAnalyzed && message.documentsAnalyzed > 1) ||
+                                                isAllDocumentsQuery;
+                                        })() ? (
                                             // Multi-document response
                                             <MultiDocumentResponse
                                                 answer={message.content}
@@ -923,7 +1073,9 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                             setInputValue(e.target.value);
                         }}
                         onCursorPositionChange={(pos) => {
-                            setCursorPosition(pos);
+                            // Only update cursor position state when it actually changes
+                            // This prevents unnecessary re-renders
+                            setCursorPosition(prevPos => prevPos !== pos ? pos : prevPos);
                         }}
                         onAutocompleteKeyDown={handleAutocompleteKeyDown}
                         placeholder="Type @ or @- to query a specific document, or ask questions to search across all documents"
@@ -932,7 +1084,7 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                     />
                     <PromptInputToolbar className='flex justify-end'>
                         <PromptInputSubmit
-                            disabled={!inputValue.trim() || isTyping || !hasQuestionText(inputValue, documents)}
+                            disabled={!inputValue.trim() || isTyping || !hasQuestionTextResult}
                             status={isTyping ? 'streaming' : 'ready'}
                         />
                     </PromptInputToolbar>

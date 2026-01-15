@@ -65,7 +65,7 @@ export const PromptInputTextarea = React.forwardRef<HTMLTextAreaElement, PromptI
       while ((match = tagRegex.exec(value)) !== null) {
         const tagName = match[1];
         // Check if this tag matches an actual document
-        const matchingDoc = documents.find(doc => 
+        const matchingDoc = documents.find(doc =>
           doc.name.toLowerCase() === tagName.toLowerCase() ||
           doc.name.toLowerCase().includes(tagName.toLowerCase())
         );
@@ -90,7 +90,7 @@ export const PromptInputTextarea = React.forwardRef<HTMLTextAreaElement, PromptI
         const beforeTag = value.substring(0, tagAtCursor.start);
         const afterTag = value.substring(tagAtCursor.end);
         const newValue = beforeTag + afterTag;
-        
+
         // Update the value
         if (onChange) {
           const syntheticEvent = {
@@ -121,7 +121,7 @@ export const PromptInputTextarea = React.forwardRef<HTMLTextAreaElement, PromptI
         const beforeTag = value.substring(0, tagBeforeCursor.start);
         const afterTag = value.substring(tagBeforeCursor.end);
         const newValue = beforeTag + afterTag;
-        
+
         if (onChange) {
           const syntheticEvent = {
             target: { value: newValue, selectionStart: tagBeforeCursor.start, selectionEnd: tagBeforeCursor.start }
@@ -141,38 +141,8 @@ export const PromptInputTextarea = React.forwardRef<HTMLTextAreaElement, PromptI
       }
     }
 
-    // Update cursor position immediately for special characters like '@'
-    // This ensures trigger detection works as soon as '@' is typed
-    if (onCursorPositionChange) {
-      const currentPos = e.currentTarget.selectionStart;
-      let newPos = currentPos;
-      
-      // Calculate new cursor position based on key pressed
-      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        // Regular character - cursor moves forward
-        newPos = currentPos + 1;
-      } else if (e.key === 'Backspace' && !e.shiftKey) {
-        // Backspace - cursor moves back (if not handled above)
-        newPos = Math.max(0, currentPos - 1);
-      } else if (e.key === 'Delete') {
-        // Delete - cursor stays same
-        newPos = currentPos;
-      } else if (e.key === 'ArrowLeft') {
-        newPos = Math.max(0, currentPos - 1);
-      } else if (e.key === 'ArrowRight') {
-        newPos = Math.min(e.currentTarget.value.length, currentPos + 1);
-      }
-      
-      // Update cursor position immediately for trigger detection
-      if (newPos !== currentPos || e.key === '@' || e.key === '-') {
-        // Use requestAnimationFrame to ensure it happens after the key is processed
-        requestAnimationFrame(() => {
-          if (e.currentTarget) {
-            onCursorPositionChange(e.currentTarget.selectionStart);
-          }
-        });
-      }
-    }
+    // Cursor position is tracked in onChange handler, no need to duplicate here
+    // This reduces redundant state updates and improves typing performance
 
     if (e.key === 'Enter') {
       if (e.shiftKey) {
