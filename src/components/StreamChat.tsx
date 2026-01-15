@@ -31,6 +31,8 @@ import { MultiDocumentResponse } from '@/components/MultiDocumentResponse';
 import { MarkdownResponse } from '@/components/MarkdownResponse';
 import { Badge } from '@/components/ui/badge';
 import { FileText } from 'lucide-react';
+import { DocumentSelector } from '@/components/DocumentSelector';
+import { SelectedDocumentChips } from '@/components/SelectedDocumentChips';
 
 type ChatMessage = {
     id: string;
@@ -60,10 +62,11 @@ type ChatMessage = {
 interface ChatInterfaceProps {
     chatId: string | null;
     userId: string; // Add userId prop
+    documentName?: string; // Document name to auto-insert into input
 }
 
 const ML_SERVER_URL = process.env.NEXT_PUBLIC_ML_SERVER_URL || 'http://localhost:8000/';
-const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
+const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [, setIsLoadingChat] = useState(false);
     const [inputValue, setInputValue] = useState('');
@@ -71,10 +74,12 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
     const [currentChatId, setCurrentChatId] = useState<string | null>(chatId);
     const [cursorPosition, setCursorPosition] = useState(0);
+    const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const savedMessageIdsRef = useRef<Set<string>>(new Set());
     const fallbackTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
     const messageContentRef = useRef<Map<string, string>>(new Map());
+    const documentNameInsertedRef = useRef<boolean>(false);
 
     const { user } = useUser();
 
@@ -245,6 +250,30 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
     }, []);
 
 
+
+    // Auto-insert document name when provided
+    useEffect(() => {
+        if (documentName && !documentNameInsertedRef.current && inputValue === '') {
+            const documentTag = `@-${documentName} `;
+            setInputValue(documentTag);
+            documentNameInsertedRef.current = true;
+
+            // Set cursor position and focus after insertion
+            setTimeout(() => {
+                if (textareaRef.current) {
+                    const cursorPos = documentTag.length;
+                    textareaRef.current.setSelectionRange(cursorPos, cursorPos);
+                    textareaRef.current.focus();
+                    setCursorPosition(cursorPos);
+                }
+            }, 0);
+        }
+    }, [documentName, inputValue]);
+
+    // Reset document name insertion flag when chatId changes
+    useEffect(() => {
+        documentNameInsertedRef.current = false;
+    }, [chatId]);
 
     // Load chat messages when chatId changes
     useEffect(() => {
@@ -481,8 +510,16 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
         const targetMessageId = messageId || streamingMessageId;
         const activeChatId = chatIdForSaving || currentChatId;
 
-        // Extract document IDs from question if document tags are present
-        const documentIds = extractDocumentIdFromQuestion(question, documents);
+        // Extract document IDs from selected documents (priority) or from question tags
+        let documentIds: string[] = [];
+
+        // Priority 1: Use selected documents if any
+        if (selectedDocuments.length > 0) {
+            documentIds = selectedDocuments.map(doc => String(doc.id));
+        } else {
+            // Priority 2: Extract from @- tags in question
+            documentIds = extractDocumentIdFromQuestion(question, documents);
+        }
 
         console.log('Starting stream chat with userId:', userId, 'question:', question, 'messageId:', targetMessageId, 'documentIds:', documentIds);
         try {
@@ -837,7 +874,7 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
 
             fallbackTimeoutRef.current.set(targetMessageId, timeoutId);
         }
-    }, [userId, streamingMessageId, currentChatId, saveAssistantMessage, hasDocumentTag, documents, extractDocumentIdFromQuestion]);
+    }, [userId, streamingMessageId, currentChatId, saveAssistantMessage, hasDocumentTag, documents, extractDocumentIdFromQuestion, selectedDocuments]);
 
     // Helper function to check if input has actual question text (not just document tags)
     const hasQuestionText = useCallback((text: string, docs: Document[]): boolean => {
@@ -989,6 +1026,7 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
 
         setMessages(prev => [...prev, userMessage]);
         setInputValue('');
+        setSelectedDocuments([]);
 
         // Save user message to database
         if (activeChatId) {
@@ -1128,6 +1166,23 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
 
             {/* Input Area */}
             <div className="border-t p-4 relative">
+                {/* Selected Documents Chips */}
+                {selectedDocuments.length > 0 && (
+                    <div className="mb-2">
+                        <div className="text-xs font-medium text-muted-foreground mb-1.5 px-1">
+                            Context Used
+                        </div>
+                        <SelectedDocumentChips
+                            documents={selectedDocuments}
+                            onRemove={(documentId) => {
+                                setSelectedDocuments(prev =>
+                                    prev.filter(doc => String(doc.id) !== String(documentId))
+                                );
+                            }}
+                        />
+                    </div>
+                )}
+
                 <PromptInput onSubmit={handleSubmit}>
                     <PromptInputTextarea
                         ref={textareaRef}
@@ -1145,7 +1200,14 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
                         disabled={isTyping}
                         documents={documents}
                     />
-                    <PromptInputToolbar className='flex justify-end'>
+                    <PromptInputToolbar className='flex items-center justify-between'>
+                        <div className="flex items-center gap-2">
+                            <DocumentSelector
+                                documents={documents}
+                                selectedDocuments={selectedDocuments}
+                                onSelectionChange={setSelectedDocuments}
+                            />
+                        </div>
                         <PromptInputSubmit
                             disabled={!inputValue.trim() || isTyping || !hasQuestionTextResult}
                             status={isTyping ? 'streaming' : 'ready'}

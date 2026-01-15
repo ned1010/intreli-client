@@ -11,29 +11,43 @@ import {
     File,
     CheckCircle2,
 } from "lucide-react";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useUser } from '@clerk/nextjs';
 import api from '@/lib/axios';
 import { toast } from 'sonner';
+import { useDocumentProgress } from '@/hooks/use-document-progress';
+import { DocumentProgressBar } from './DocumentProgressBar';
+import { useRouter, usePathname } from 'next/navigation';
+import { nanoid } from 'nanoid';
 
 interface DropzoneProps {
     className?: string;
+}
+
+interface UploadState {
+    documentId: string;
+    fileName: string;
+    isCancelling?: boolean;
 }
 
 export function Dropzone({ className = "" }: DropzoneProps) {
 
     const [isUploading, setIsUploading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [activeUploads, setActiveUploads] = useState<Map<string, UploadState>>(new Map());
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { user } = useUser();
     const queryClient = useQueryClient();
+    const router = useRouter();
+    const pathname = usePathname();
+    const previousPathnameRef = useRef<string | null>(null);
 
 
     // const {sessionClaims} = useAuth();
     // Authorization: `Bearer ${sessionClaims}`
 
-    // Upload mutation
+    // Upload mutation - handles single file
     const uploadMutation = useMutation({
         mutationFn: async (file: File) => {
             const formData = new FormData();
@@ -45,18 +59,24 @@ export function Dropzone({ className = "" }: DropzoneProps) {
                 headers: { 'Content-Type': 'multipart/form-data' },
                 timeout: 30000, // 30 seconds for uploads (S3 + DB operations)
             });
-            console.log('File upload data', response.data)
-            return response.data;
+            return { ...response.data, fileName: file.name };
         },
-        onSuccess: (data) => {
-            console.log('Upload successful:', data);
-
+        onSuccess: (data, file) => {
             // Dismiss loading toast
             toast.dismiss();
             setError(null);
 
             if (data && data.success && data.document) {
-                toast.success('Document uploaded successfully!');
+                const documentId = data.document.id;
+                const fileName = data.document.name || file.name;
+
+                // Add to active uploads to track progress
+                setActiveUploads(prev => {
+                    const newMap = new Map(prev);
+                    newMap.set(documentId, { documentId, fileName });
+                    return newMap;
+                });
+
                 // Invalidate and refetch documents
                 queryClient.invalidateQueries({ queryKey: ['documents', user?.id] });
             } else {
@@ -64,24 +84,34 @@ export function Dropzone({ className = "" }: DropzoneProps) {
                 setError(data?.message || 'Upload failed');
             }
 
+            // Reset uploading state - individual file upload is complete
+            // Note: isUploading tracks if we're currently uploading files, not processing
             setIsUploading(false);
+            
             // Reset file input to allow selecting the same file again
             if (fileInputRef.current) {
                 fileInputRef.current.value = '';
             }
         },
-        onError: (error: Error & { response?: { data?: { message?: string } } }) => {
-            console.error('Upload error:', error);
-
+        onError: (error: Error & { response?: { status?: number; data?: { message?: string } } }, file) => {
             // Dismiss loading toast
             toast.dismiss();
 
-            // Extract error message from response
+            // Extract error message and status from response
+            const status = error?.response?.status;
             const errorMessage = error?.response?.data?.message || error.message || 'Unknown error';
             setError(errorMessage);
-            toast.error('Upload failed: ' + errorMessage);
 
+            // Check if duplicate document (409 Conflict)
+            if (status === 409) {
+                toast.error('Document not uploaded - duplicate document detected. Document already exists in the database');
+            } else {
+                toast.error('Upload failed: ' + errorMessage);
+            }
+
+            // Reset uploading state
             setIsUploading(false);
+            
             // Reset file input on error too
             if (fileInputRef.current) {
                 fileInputRef.current.value = '';
@@ -91,13 +121,26 @@ export function Dropzone({ className = "" }: DropzoneProps) {
 
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (file) {
-            setIsUploading(true);
-            toast.loading('Uploading document...', {
-                duration: Infinity, // Keep loading toast until manually dismissed
+        const files = e.target.files;
+        if (files && files.length > 0) {
+            const fileArray = Array.from(files);
+            
+            // Show loading toast for multiple files
+            if (fileArray.length > 1) {
+                toast.loading(`Uploading ${fileArray.length} documents...`, {
+                    duration: Infinity,
+                });
+            } else {
+                toast.loading('Uploading document...', {
+                    duration: Infinity,
+                });
+            }
+
+            // Upload each file independently
+            fileArray.forEach((file) => {
+                setIsUploading(true);
+                uploadMutation.mutate(file);
             });
-            uploadMutation.mutate(file);
         }
     };
 
@@ -108,8 +151,131 @@ export function Dropzone({ className = "" }: DropzoneProps) {
     };
 
 
+    // Handle cancellation
+    const handleCancel = async (documentId: string) => {
+        const upload = activeUploads.get(documentId);
+        if (!upload) return;
+
+        // Set cancelling state
+        setActiveUploads(prev => {
+            const newMap = new Map(prev);
+            const existing = newMap.get(documentId);
+            if (existing) {
+                newMap.set(documentId, { ...existing, isCancelling: true });
+            }
+            return newMap;
+        });
+
+        try {
+            // Call DELETE endpoint
+            await api.delete(`/api/v1/documents/${documentId}?userId=${user?.id || ''}`);
+            
+            // Remove from active uploads
+            setActiveUploads(prev => {
+                const newMap = new Map(prev);
+                newMap.delete(documentId);
+                return newMap;
+            });
+
+            toast.success('Document upload cancelled');
+            queryClient.invalidateQueries({ queryKey: ['documents', user?.id] });
+        } catch (error: any) {
+            console.error('Error cancelling document:', error);
+            const errorMessage = error?.response?.data?.message || error.message || 'Failed to cancel upload';
+            toast.error('Failed to cancel: ' + errorMessage);
+            
+            // Reset cancelling state on error
+            setActiveUploads(prev => {
+                const newMap = new Map(prev);
+                const existing = newMap.get(documentId);
+                if (existing) {
+                    newMap.set(documentId, { ...existing, isCancelling: false });
+                }
+                return newMap;
+            });
+        }
+    };
+
+    // Component to track individual document progress
+    const DocumentProgressTracker = ({ documentId, fileName, isCancelling }: UploadState) => {
+        const { status, progress, error, cancel } = useDocumentProgress(documentId, user?.id || null, true);
+
+        // Handle completion - show toast but don't auto-remove
+        useEffect(() => {
+            if (status === 'completed') {
+                toast.success(`${fileName} is ready! You can now ask questions about it.`);
+            }
+        }, [status, fileName]);
+
+        const handleOpen = () => {
+            // Generate a new chat ID and navigate with document name
+            const newChatId = nanoid();
+            router.push(`/chat/${newChatId}?documentName=${encodeURIComponent(fileName)}`);
+        };
+
+        const handleClose = () => {
+            setActiveUploads(prev => {
+                const newMap = new Map(prev);
+                newMap.delete(documentId);
+                return newMap;
+            });
+        };
+
+        const handleCancelClick = () => {
+            // Stop polling first
+            cancel();
+            // Then call the cancel handler
+            handleCancel(documentId);
+        };
+
+        if (!status) {
+            return null;
+        }
+
+        return (
+            <DocumentProgressBar
+                documentId={documentId}
+                fileName={fileName}
+                status={status}
+                progress={progress}
+                errorMessage={error}
+                onOpen={status === 'completed' ? handleOpen : undefined}
+                onClose={handleClose}
+                onCancel={handleCancelClick}
+                isCancelling={isCancelling}
+            />
+        );
+    };
+
+    // Cleanup on pathname change (navigation away from knowledge-base page)
+    useEffect(() => {
+        const isKnowledgeBasePage = pathname?.includes('/knowledge-base');
+        const wasKnowledgeBasePage = previousPathnameRef.current?.includes('/knowledge-base');
+        
+        // If we were on knowledge-base page and navigated away, clean up progress bars
+        if (wasKnowledgeBasePage && !isKnowledgeBasePage && previousPathnameRef.current !== null) {
+            setActiveUploads(new Map());
+        }
+        
+        previousPathnameRef.current = pathname;
+    }, [pathname]);
+
     return (
         <div className={`space-y-6 ${className}`}>
+            {/* Progress Bars for Active Uploads */}
+            {Array.from(activeUploads.values()).length > 0 && (
+                <div className="space-y-3">
+                    {Array.from(activeUploads.values()).map((upload) => (
+                        <DocumentProgressTracker
+                            key={upload.documentId}
+                            documentId={upload.documentId}
+                            fileName={upload.fileName}
+                            isCancelling={upload.isCancelling}
+                        />
+                    ))}
+                </div>
+            )}
+
             {/* Dropzone Card */}
 
             <Card className="overflow-hidden border-2 border-dashed border-gray-200 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-500 transition-all duration-300">
@@ -188,6 +354,7 @@ export function Dropzone({ className = "" }: DropzoneProps) {
                             type="file"
                             className="hidden"
                             accept=".pdf"
+                            multiple
                             onChange={handleFileChange}
                             disabled={isUploading}
                         />

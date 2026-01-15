@@ -57,13 +57,18 @@ export const PromptInputTextarea = React.forwardRef<HTMLTextAreaElement, PromptI
       const cursorPos = textarea.selectionStart;
       const value = textarea.value;
 
-      // Find document tags in the text
-      const tagRegex = /@-([^\s]+)/g;
+      // Find document tags in the text - use same regex as parseDocumentTags
+      const tagRegex = /@-([^@]+?)(?=\s*@-|$)/g;
       let match;
       const tags: Array<{ start: number; end: number; fullText: string }> = [];
 
       while ((match = tagRegex.exec(value)) !== null) {
-        const tagName = match[1];
+        let tagName = match[1].trim();
+        // Remove trailing punctuation (but keep .pdf extensions)
+        if (!tagName.toLowerCase().endsWith('.pdf')) {
+          tagName = tagName.replace(/[.,;:!?]+$/, '');
+        }
+        
         // Check if this tag matches an actual document
         const matchingDoc = documents.find(doc =>
           doc.name.toLowerCase() === tagName.toLowerCase() ||
@@ -72,16 +77,16 @@ export const PromptInputTextarea = React.forwardRef<HTMLTextAreaElement, PromptI
 
         if (matchingDoc) {
           tags.push({
-            start: match.index,
-            end: match.index + match[0].length,
+            start: match.index!,
+            end: match.index! + match[0].length,
             fullText: match[0]
           });
         }
       }
 
-      // Check if cursor is inside or at the end of a document tag
+      // Check if cursor is at start, inside, or at the end of a document tag
       const tagAtCursor = tags.find(
-        tag => cursorPos > tag.start && cursorPos <= tag.end
+        tag => cursorPos >= tag.start && cursorPos <= tag.end
       );
 
       if (tagAtCursor) {

@@ -10,6 +10,7 @@ interface DocumentTag {
   name: string;
   fullText: string; // e.g., "@-document_name"
   documentId?: string;
+  isCompleted?: boolean; // Whether the document has 'completed' status
 }
 
 interface DocumentTagInputProps {
@@ -67,7 +68,8 @@ export function DocumentTagInput({
           end: match.index + match[0].length,
           name: tagName,
           fullText: match[0],
-          documentId: String(matchingDoc.id)
+          documentId: String(matchingDoc.id),
+          isCompleted: matchingDoc.status === 'completed'
         });
       }
     }
@@ -76,6 +78,13 @@ export function DocumentTagInput({
   }, [documents]);
 
   const documentTags = parseDocumentTags(value);
+
+  // Helper function to find tag at cursor position
+  const findTagAtPosition = useCallback((pos: number, tags: DocumentTag[]): DocumentTag | null => {
+    return tags.find(
+      tag => pos >= tag.start && pos <= tag.end
+    ) || null;
+  }, []);
 
   // Handle backspace to delete entire document tag
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -86,12 +95,44 @@ export function DocumentTagInput({
 
     const textarea = e.currentTarget;
     const cursorPos = textarea.selectionStart;
+    const selectionEnd = textarea.selectionEnd;
+
+    // Handle arrow keys to skip over tags
+    if (e.key === 'ArrowLeft' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      const tag = findTagAtPosition(cursorPos, documentTags);
+      if (tag && cursorPos > tag.start) {
+        e.preventDefault();
+        // Move cursor to before the tag
+        const newPos = tag.start;
+        textarea.setSelectionRange(newPos, newPos);
+        setCursorPosition(newPos);
+        if (onCursorPositionChange) {
+          onCursorPositionChange(newPos);
+        }
+        return;
+      }
+    }
+
+    if (e.key === 'ArrowRight' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      const tag = findTagAtPosition(cursorPos, documentTags);
+      if (tag && cursorPos < tag.end) {
+        e.preventDefault();
+        // Move cursor to after the tag
+        const newPos = tag.end;
+        textarea.setSelectionRange(newPos, newPos);
+        setCursorPosition(newPos);
+        if (onCursorPositionChange) {
+          onCursorPositionChange(newPos);
+        }
+        return;
+      }
+    }
 
     // Handle backspace to delete entire document tag
     if (e.key === 'Backspace' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-      // Find if cursor is at the start or inside a document tag
+      // Find if cursor is at the start, inside, or at the end of a document tag
       const tagAtCursor = documentTags.find(
-        tag => cursorPos > tag.start && cursorPos <= tag.end
+        tag => cursorPos >= tag.start && cursorPos <= tag.end
       );
 
       if (tagAtCursor) {
@@ -142,6 +183,69 @@ export function DocumentTagInput({
       }
     }
 
+    // Handle Delete key to delete entire document tag
+    if (e.key === 'Delete' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      // Find if cursor is before or inside a document tag
+      const tagAtCursor = documentTags.find(
+        tag => cursorPos >= tag.start && cursorPos < tag.end
+      );
+
+      if (tagAtCursor) {
+        e.preventDefault();
+        // Delete the entire tag
+        const beforeTag = value.substring(0, tagAtCursor.start);
+        const afterTag = value.substring(tagAtCursor.end);
+        const newValue = beforeTag + afterTag;
+        onChange(newValue);
+
+        // Set cursor position after deletion
+        setTimeout(() => {
+          if (textareaRef.current) {
+            const newCursorPos = tagAtCursor.start;
+            textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
+            setCursorPosition(newCursorPos);
+            if (onCursorPositionChange) {
+              onCursorPositionChange(newCursorPos);
+            }
+          }
+        }, 0);
+        return;
+      }
+    }
+
+    // Prevent character editing inside tags
+    // Check if cursor is inside a tag and user is trying to type
+    if (!e.ctrlKey && !e.metaKey && !['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) {
+      const tag = findTagAtPosition(cursorPos, documentTags);
+      if (tag) {
+        e.preventDefault();
+        // Move cursor to after the tag before allowing input
+        const newPos = tag.end;
+        textarea.setSelectionRange(newPos, newPos);
+        setCursorPosition(newPos);
+        if (onCursorPositionChange) {
+          onCursorPositionChange(newPos);
+        }
+        // Allow the character to be inserted after the tag
+        const beforeTag = value.substring(0, tag.end);
+        const afterTag = value.substring(tag.end);
+        const newValue = beforeTag + e.key + afterTag;
+        onChange(newValue);
+        
+        setTimeout(() => {
+          if (textareaRef.current) {
+            const newCursorPos = newPos + 1;
+            textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
+            setCursorPosition(newCursorPos);
+            if (onCursorPositionChange) {
+              onCursorPositionChange(newCursorPos);
+            }
+          }
+        }, 0);
+        return;
+      }
+    }
+
     // Handle Enter key
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -170,13 +274,51 @@ export function DocumentTagInput({
 
     if (onCursorPositionChange) {
       const pos = e.target.selectionStart;
-      setCursorPosition(pos);
-      onCursorPositionChange(pos);
+      // Ensure cursor is not inside a tag after change
+      const updatedTags = parseDocumentTags(newValue);
+      const tag = updatedTags.find(
+        tag => pos >= tag.start && pos <= tag.end
+      );
+      if (tag) {
+        // Move cursor to before the tag
+        setTimeout(() => {
+          if (textareaRef.current) {
+            const newPos = tag.start;
+            textareaRef.current.setSelectionRange(newPos, newPos);
+            setCursorPosition(newPos);
+            onCursorPositionChange(newPos);
+          }
+        }, 0);
+      } else {
+        setCursorPosition(pos);
+        onCursorPositionChange(pos);
+      }
     }
   };
 
   const handleSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
-    const pos = e.currentTarget.selectionStart;
+    const textarea = e.currentTarget;
+    const pos = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    
+    // Check if selection is inside a tag
+    const tag = findTagAtPosition(pos, documentTags);
+    if (tag && pos >= tag.start && pos <= tag.end) {
+      // Move cursor to before the tag
+      setTimeout(() => {
+        if (textareaRef.current) {
+          const newPos = tag.start;
+          textareaRef.current.setSelectionRange(newPos, newPos);
+          setCursorPosition(newPos);
+          setSelectionStart(newPos);
+          if (onCursorPositionChange) {
+            onCursorPositionChange(newPos);
+          }
+        }
+      }, 0);
+      return;
+    }
+    
     setCursorPosition(pos);
     setSelectionStart(pos);
     if (onCursorPositionChange) {
@@ -188,9 +330,21 @@ export function DocumentTagInput({
     setTimeout(() => {
       if (textareaRef.current) {
         const pos = textareaRef.current.selectionStart;
-        setCursorPosition(pos);
-        if (onCursorPositionChange) {
-          onCursorPositionChange(pos);
+        // Check if click is inside a tag and move cursor outside
+        const tag = findTagAtPosition(pos, documentTags);
+        if (tag && pos >= tag.start && pos <= tag.end) {
+          // Move cursor to before the tag
+          const newPos = tag.start;
+          textareaRef.current.setSelectionRange(newPos, newPos);
+          setCursorPosition(newPos);
+          if (onCursorPositionChange) {
+            onCursorPositionChange(newPos);
+          }
+        } else {
+          setCursorPosition(pos);
+          if (onCursorPositionChange) {
+            onCursorPositionChange(pos);
+          }
         }
       }
     }, 0);
@@ -208,7 +362,7 @@ export function DocumentTagInput({
   const renderTextWithChips = () => {
     if (!value) return null;
 
-    const parts: Array<{ text: string; isTag: boolean; tagName?: string }> = [];
+    const parts: Array<{ text: string; isTag: boolean; tagName?: string; isCompleted?: boolean }> = [];
     let lastIndex = 0;
 
     // Sort tags by start position
@@ -227,7 +381,8 @@ export function DocumentTagInput({
       parts.push({
         text: tag.fullText,
         isTag: true,
-        tagName: tag.name
+        tagName: tag.name,
+        isCompleted: tag.isCompleted
       });
 
       lastIndex = tag.end;
@@ -243,15 +398,17 @@ export function DocumentTagInput({
 
     return parts.map((part, index) => {
       if (part.isTag) {
+        // Apply muted styling to all document tags
         return (
           <span
             key={`tag-${index}`}
             className={cn(
               'inline-flex items-center gap-1 px-2 py-0.5 rounded-md',
-              'bg-primary/15 text-primary border border-primary/30',
               'font-medium text-sm',
               'mx-0.5 my-0.5',
-              'shadow-sm'
+              'shadow-sm',
+              // Muted styling for all document tags with more visible border
+              'bg-muted text-muted-foreground border-2 border-gray-400 dark:border-gray-500'
             )}
             contentEditable={false}
             data-tag={part.tagName}

@@ -9,6 +9,9 @@ export interface Document {
     filePath: string;
     fileSize: number;
     createdAt: Date;
+    status?: 'uploading' | 'processing' | 'chunking' | 'embedding' | 'storing' | 'completed' | 'failed';
+    progress?: number;
+    errorMessage?: string | null;
 }
 
 export interface SourceData {
