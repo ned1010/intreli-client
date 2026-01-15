@@ -5,10 +5,10 @@ import { CitationData, SourceData } from '@/types/types';
 import { AcademicSynthesisResponse } from '@/components/AcademicSynthesisResponse';
 
 interface MarkdownResponseProps {
-  answer: string;
-  citations: CitationData[];
-  sources?: SourceData[];
-  responseType?: 'single_document' | 'all_documents';
+    answer: string;
+    citations: CitationData[];
+    sources?: SourceData[];
+    responseType?: 'single_document' | 'all_documents';
 }
 
 /**
@@ -21,22 +21,22 @@ interface MarkdownResponseProps {
  * render markdown (bold, lists, headers, tables, etc.).
  */
 export function MarkdownResponse({
-  answer,
-  citations,
-  sources,
-  responseType = 'single_document',
+    answer,
+    citations,
+    sources,
+    responseType = 'single_document',
 }: MarkdownResponseProps) {
-  // For now we delegate entirely to AcademicSynthesisResponse.
-  // If we ever need raw markdown without the reference section,
-  // we can introduce a direct <Response> branch here.
-  return (
-    <AcademicSynthesisResponse
-      answer={answer}
-      citations={citations}
-      sources={sources}
-      responseType={responseType}
-    />
-  );
+    // For now we delegate entirely to AcademicSynthesisResponse.
+    // If we ever need raw markdown without the reference section,
+    // we can introduce a direct <Response> branch here.
+    return (
+        <AcademicSynthesisResponse
+            answer={answer}
+            citations={citations}
+            sources={sources}
+            responseType={responseType}
+        />
+    );
 }
 
 

@@ -25,6 +25,7 @@ import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/axios';
 import { Document, CitationData, SourceData } from '@/types/types';
 import { useDocumentAutocomplete } from '@/hooks/use-document-autocomplete';
+import { documentCache } from '@/lib/cache';
 import { DocumentAutocomplete } from '@/components/DocumentAutocomplete';
 import { MultiDocumentResponse } from '@/components/MultiDocumentResponse';
 import { MarkdownResponse } from '@/components/MarkdownResponse';
@@ -85,7 +86,21 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
         queryFn: async () => {
             const response = await api.get(`/api/v1/documents?userId=${userId}`);
             console.log('Documents fetched:', response.data.documents);
-            return response.data.documents || [];
+            const docs = response.data.documents || [];
+
+            // Invalidate cache when documents change
+            // This ensures cache stays in sync with server data
+            if (userId) {
+                // Clear query caches for this user
+                const cacheKeys = documentCache.keys();
+                cacheKeys.forEach(key => {
+                    if (key.startsWith(`${userId}-`)) {
+                        documentCache.remove(key);
+                    }
+                });
+            }
+
+            return docs;
         },
         enabled: !!userId,
         staleTime: 5 * 60 * 1000, // 5 minutes
@@ -374,27 +389,69 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
 
     // Helper function to extract document ID from question text
     // Returns the first matching document ID if a document tag is found
-    const extractDocumentIdFromQuestion = useCallback((text: string, docs: Document[]): string | null => {
-        if (!text.trim() || !docs.length) return null;
+    // Create name-to-ID map for fast O(1) lookups
+    const nameToIdMapRef = useRef<Map<string, string>>(new Map());
 
-        const tagRegex = /@-([^\s]+)/g;
+    // Update name-to-ID map when documents change
+    useEffect(() => {
+        const map = new Map<string, string>();
+        documents.forEach(doc => {
+            const lowerName = doc.name.toLowerCase();
+            const docId = String(doc.id);
+            map.set(lowerName, docId);
+        });
+        nameToIdMapRef.current = map;
+    }, [documents]);
+
+    const extractDocumentIdFromQuestion = useCallback((text: string, docs: Document[]): string[] => {
+        if (!text.trim() || !docs.length) return [];
+
+        // Updated regex to handle document names with spaces
+        // Matches @- followed by characters until next @- or end of string
+        const tagRegex = /@-([^@]+?)(?=\s*@-|$)/g;
         let match;
+        const documentIds: string[] = [];
+        const seenIds = new Set<string>();
 
         while ((match = tagRegex.exec(text)) !== null) {
-            const tagName = match[1];
-            // Find matching document (case-insensitive, supports partial matches)
-            const matchingDoc = docs.find(doc =>
-                doc.name.toLowerCase() === tagName.toLowerCase() ||
-                doc.name.toLowerCase().includes(tagName.toLowerCase())
-            );
+            let tagName = match[1].trim();
+            // Remove trailing punctuation (but keep .pdf extensions)
+            if (!tagName.toLowerCase().endsWith('.pdf')) {
+                tagName = tagName.replace(/[.,;:!?]+$/, '');
+            }
+            const tagNameLower = tagName.toLowerCase();
 
-            if (matchingDoc) {
-                // Return document ID as string (ML server expects string)
-                return String(matchingDoc.id);
+            // Use cached name-to-ID map for O(1) lookup
+            let docId = nameToIdMapRef.current.get(tagNameLower);
+
+            // Fallback: check for partial matches (exact match first, then partial)
+            if (!docId) {
+                // First try exact match
+                for (const [name, id] of nameToIdMapRef.current.entries()) {
+                    if (name === tagNameLower) {
+                        docId = id;
+                        break;
+                    }
+                }
+                // Then try partial match
+                if (!docId) {
+                    for (const [name, id] of nameToIdMapRef.current.entries()) {
+                        if (name.includes(tagNameLower) || tagNameLower.includes(name)) {
+                            docId = id;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Add to array if found and not already added
+            if (docId && !seenIds.has(docId)) {
+                documentIds.push(docId);
+                seenIds.add(docId);
             }
         }
 
-        return null;
+        return documentIds;
     }, []);
 
     // Helper function to check if a question contains a document tag
@@ -424,24 +481,30 @@ const StreamChat = ({ chatId, userId }: ChatInterfaceProps) => {
         const targetMessageId = messageId || streamingMessageId;
         const activeChatId = chatIdForSaving || currentChatId;
 
-        // Extract document ID from question if document tag is present
-        const documentId = extractDocumentIdFromQuestion(question, documents);
+        // Extract document IDs from question if document tags are present
+        const documentIds = extractDocumentIdFromQuestion(question, documents);
 
-        console.log('Starting stream chat with userId:', userId, 'question:', question, 'messageId:', targetMessageId, 'documentId:', documentId);
+        console.log('Starting stream chat with userId:', userId, 'question:', question, 'messageId:', targetMessageId, 'documentIds:', documentIds);
         try {
-            // Build request payload - include documentId if found
+            // Build request payload - include documentIds if found
             const requestPayload: {
                 question: string;
                 userId: string;
                 documentId?: string;
+                documentIds?: string[];
             } = {
                 question,
                 userId
             };
 
-            // Include documentId if we successfully extracted it
-            if (documentId) {
-                requestPayload.documentId = documentId;
+            // Include documentIds if we successfully extracted any
+            if (documentIds.length > 0) {
+                // For backward compatibility, also set documentId if only one document
+                if (documentIds.length === 1) {
+                    requestPayload.documentId = documentIds[0];
+                }
+                // Always include documentIds array for multi-document support
+                requestPayload.documentIds = documentIds;
             }
 
             const response = await fetch(`${ML_SERVER_URL}/api/ml/streamchat`, {

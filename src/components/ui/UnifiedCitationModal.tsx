@@ -28,9 +28,15 @@ export function UnifiedCitationModal({
         ? relevanceText.substring(0, 300) + '...' 
         : relevanceText;
 
+    // Format relevance score for display
+    const relevanceScore = citation.score ?? 0;
+    const scoreDisplay = typeof relevanceScore === 'number' 
+        ? (relevanceScore * 100).toFixed(1) + '%' 
+        : 'N/A';
+
     return (
         <div className="space-y-3">
-            {/* Document Title */}
+            {/* Document Name */}
             <div className="flex items-center gap-2">
                 <FileText className="h-4 w-4 text-muted-foreground" />
                 <div className="text-sm font-medium truncate">{citation.pdf_name}</div>
@@ -41,7 +47,12 @@ export function UnifiedCitationModal({
                 Page {citation.page}
             </div>
             
-            {/* Relevance Section */}
+            {/* Relevance Score */}
+            <div className="text-xs text-muted-foreground">
+                Relevance Score: {scoreDisplay}
+            </div>
+            
+            {/* Relevance Text Section */}
             {displayText && (
                 <div className="space-y-1 pt-2 border-t">
                     <div className="text-xs font-semibold text-muted-foreground uppercase">

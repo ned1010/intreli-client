@@ -44,11 +44,17 @@ export function DocumentTagInput({
   // Parse document tags from value - only include tags that match actual documents
   const parseDocumentTags = useCallback((text: string): DocumentTag[] => {
     const tags: DocumentTag[] = [];
-    const regex = /@-([^\s]+)/g;
+    // Updated regex to handle document names with spaces
+    const regex = /@-([^@]+?)(?=\s*@-|$)/g;
     let match;
 
     while ((match = regex.exec(text)) !== null) {
-      const tagName = match[1];
+      let tagName = match[1].trim();
+      // Remove trailing punctuation (but keep .pdf extensions)
+      if (!tagName.toLowerCase().endsWith('.pdf')) {
+        tagName = tagName.replace(/[.,;:!?]+$/, '');
+      }
+      
       // Only include tags that match actual document names
       const matchingDoc = documents.find(doc =>
         doc.name.toLowerCase() === tagName.toLowerCase() ||

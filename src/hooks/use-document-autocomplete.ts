@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Document } from '@/types/types';
+import { documentCache } from '@/lib/cache';
 
 export interface TriggerPosition {
   start: number;
@@ -27,7 +28,13 @@ export interface UseDocumentAutocompleteReturn {
 }
 
 const DEFAULT_MAX_RESULTS = 20;
-const DEFAULT_DEBOUNCE_MS = 150; // Optimized for better typing performance
+const DEFAULT_DEBOUNCE_MS = 100; // Reduced for faster response (adaptive debouncing will handle this)
+
+// Cache configuration
+const CACHE_VERSION = '1.0.0';
+const QUERY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const MAPPING_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const MAX_QUERY_CACHE_SIZE = 100;
 
 export function useDocumentAutocomplete(
   inputValue: string,
@@ -42,6 +49,65 @@ export function useDocumentAutocomplete(
   const [triggerPosition, setTriggerPosition] = useState<TriggerPosition | null>(null);
 
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // In-memory caches
+  const nameToIdMapRef = useRef<Map<string, string>>(new Map()); // lowercase name -> id
+  const idToDocumentMapRef = useRef<Map<string, Document>>(new Map()); // id -> document (for resolution)
+  const queryCacheRef = useRef<Map<string, string[]>>(new Map()); // query -> document IDs
+  const cacheTimestampsRef = useRef<Map<string, number>>(new Map()); // query -> timestamp
+
+  // Build name-to-ID mapping and ID-to-document mapping
+  useEffect(() => {
+    const nameMap = new Map<string, string>();
+    const idMap = new Map<string, Document>();
+
+    documents.forEach(doc => {
+      const lowerName = doc.name.toLowerCase();
+      const docId = String(doc.id);
+
+      // Store name -> ID mapping
+      nameMap.set(lowerName, docId);
+
+      // Store ID -> Document mapping for resolution
+      idMap.set(docId, doc);
+    });
+
+    nameToIdMapRef.current = nameMap;
+    idToDocumentMapRef.current = idMap;
+
+    // Clear query cache when documents change
+    queryCacheRef.current.clear();
+    cacheTimestampsRef.current.clear();
+
+    // Try to load from localStorage
+    const userId = documents[0]?.userId || 'default';
+    const cachedMapping = documentCache.get<{ [name: string]: string }>(
+      `mapping-${userId}`,
+      { ttl: MAPPING_CACHE_TTL, version: CACHE_VERSION }
+    );
+
+    if (cachedMapping) {
+      // Merge cached mapping with current documents
+      Object.entries(cachedMapping).forEach(([name, id]) => {
+        if (!nameMap.has(name.toLowerCase())) {
+          nameMap.set(name.toLowerCase(), id);
+        }
+      });
+      // Update ref with merged mapping
+      nameToIdMapRef.current = nameMap;
+    }
+
+    // Save mapping to localStorage
+    const mappingObj: { [name: string]: string } = {};
+    nameMap.forEach((id, name) => {
+      mappingObj[name] = id;
+    });
+    documentCache.set(
+      `mapping-${userId}`,
+      mappingObj,
+      { ttl: MAPPING_CACHE_TTL, version: CACHE_VERSION }
+    );
+  }, [documents]);
 
   // Detect trigger and filter documents
   useEffect(() => {
@@ -115,10 +181,122 @@ export function useDocumentAutocomplete(
           return;
         }
 
-        const filtered = documents.filter(doc => {
-          if (!query) return true;
-          return doc.name.toLowerCase().includes(query.toLowerCase());
-        }).slice(0, maxResults);
+        // Check query cache first
+        const cacheKey = query.toLowerCase();
+        let filteredIds: string[] | null = null;
+
+        // Check in-memory cache
+        if (queryCacheRef.current.has(cacheKey)) {
+          const timestamp = cacheTimestampsRef.current.get(cacheKey) || 0;
+          const now = Date.now();
+          if (now - timestamp < QUERY_CACHE_TTL) {
+            filteredIds = queryCacheRef.current.get(cacheKey) || null;
+          } else {
+            // Expired, remove from cache
+            queryCacheRef.current.delete(cacheKey);
+            cacheTimestampsRef.current.delete(cacheKey);
+          }
+        }
+
+        // Check localStorage cache if not in memory
+        if (!filteredIds) {
+          const userId = documents[0]?.userId || 'default';
+          const cached = documentCache.get<string[]>(
+            `${userId}-${cacheKey}`,
+            { ttl: QUERY_CACHE_TTL, version: CACHE_VERSION }
+          );
+          if (cached) {
+            filteredIds = cached;
+            // Store in memory cache
+            queryCacheRef.current.set(cacheKey, filteredIds);
+            cacheTimestampsRef.current.set(cacheKey, Date.now());
+          }
+        }
+
+        let filtered: Document[];
+
+        if (filteredIds) {
+          // Resolve IDs to documents
+          filtered = filteredIds
+            .map(id => idToDocumentMapRef.current.get(id))
+            .filter((doc): doc is Document => doc !== undefined)
+            .slice(0, maxResults);
+        } else {
+          // Filter documents using name-to-ID map for fast lookup
+          const queryLower = query.toLowerCase();
+          const nameMap = nameToIdMapRef.current;
+          const matchingIds: string[] = [];
+
+          if (!query) {
+            // No query - return all document IDs
+            nameMap.forEach((id) => {
+              matchingIds.push(id);
+            });
+          } else {
+            // Filter by query
+            nameMap.forEach((id, name) => {
+              if (name.includes(queryLower)) {
+                matchingIds.push(id);
+              }
+            });
+          }
+
+          // Sort by relevance (exact match > starts with > contains)
+          matchingIds.sort((id1, id2) => {
+            const doc1 = idToDocumentMapRef.current.get(id1);
+            const doc2 = idToDocumentMapRef.current.get(id2);
+            if (!doc1 || !doc2) return 0;
+
+            const name1 = doc1.name.toLowerCase();
+            const name2 = doc2.name.toLowerCase();
+
+            // Exact match first
+            if (name1 === queryLower && name2 !== queryLower) return -1;
+            if (name2 === queryLower && name1 !== queryLower) return 1;
+
+            // Starts with second
+            const starts1 = name1.startsWith(queryLower);
+            const starts2 = name2.startsWith(queryLower);
+            if (starts1 && !starts2) return -1;
+            if (starts2 && !starts1) return 1;
+
+            // Contains last
+            return 0;
+          });
+
+          // Limit results
+          const limitedIds = matchingIds.slice(0, maxResults);
+
+          // Resolve IDs to documents
+          filtered = limitedIds
+            .map(id => idToDocumentMapRef.current.get(id))
+            .filter((doc): doc is Document => doc !== undefined);
+
+          // Cache the result
+          queryCacheRef.current.set(cacheKey, limitedIds);
+          cacheTimestampsRef.current.set(cacheKey, Date.now());
+
+          // Save to localStorage
+          const userId = documents[0]?.userId || 'default';
+          documentCache.set(
+            `${userId}-${cacheKey}`,
+            limitedIds,
+            { ttl: QUERY_CACHE_TTL, version: CACHE_VERSION }
+          );
+
+          // Limit cache size
+          if (queryCacheRef.current.size > MAX_QUERY_CACHE_SIZE) {
+            // Remove oldest entries
+            const entries = Array.from(cacheTimestampsRef.current.entries())
+              .sort((a, b) => a[1] - b[1])
+              .slice(0, queryCacheRef.current.size - MAX_QUERY_CACHE_SIZE);
+
+            entries.forEach(([key]) => {
+              queryCacheRef.current.delete(key);
+              cacheTimestampsRef.current.delete(key);
+            });
+          }
+        }
 
         setFilteredDocuments(prev => {
           // Only update if filtered list actually changed
@@ -154,17 +332,30 @@ export function useDocumentAutocomplete(
       }
     };
 
-    // Check if '@' was just typed - if so, detect immediately without debounce
+    // Adaptive debouncing: instant for '@', shorter for query changes
     const lastChar = inputValue.length > 0 && cursorPosition > 0
       ? inputValue[cursorPosition - 1]
       : '';
     const isAtSymbol = lastChar === '@' || (lastChar === '-' && cursorPosition > 1 && inputValue[cursorPosition - 2] === '@');
 
-    // If '@' was just typed, detect immediately, otherwise debounce
+    // If '@' was just typed, detect immediately (no debounce)
+    // If query is empty, show immediately (no debounce)
+    // Otherwise use adaptive debounce (shorter for query changes)
     if (isAtSymbol) {
       detectTrigger();
     } else {
-      debounceTimerRef.current = setTimeout(detectTrigger, debounceMs);
+      const textBeforeCursor = inputValue.substring(0, Math.min(Math.max(0, cursorPosition), inputValue.length));
+      const triggerMatch = textBeforeCursor.match(/@-?([\w\s.-]*)$/);
+      const currentQuery = triggerMatch ? triggerMatch[1] : '';
+
+      // Empty query - show immediately
+      if (currentQuery === '') {
+        detectTrigger();
+      } else {
+        // Use shorter debounce for query changes (50-100ms)
+        const adaptiveDebounce = Math.min(debounceMs, 100);
+        debounceTimerRef.current = setTimeout(detectTrigger, adaptiveDebounce);
+      }
     }
 
     return () => {

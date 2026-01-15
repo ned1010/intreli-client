@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import type { ComponentPropsWithoutRef, ElementType } from 'react';
 import { Response } from '@/components/ui/shadcn-io/ai/response';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { UnifiedCitationModal } from '@/components/ui/UnifiedCitationModal';
@@ -23,6 +24,20 @@ export function MarkdownWithCitations({
     sources = [],
     responseType = 'single_document',
 }: MarkdownWithCitationsProps) {
+    // Preprocess answer to sort citation numbers (e.g., [2,1] -> [1,2])
+    const processedAnswer = useMemo(() => {
+        return answer.replace(citationRegex, (match, numbers) => {
+            const nums = numbers
+                .split(',')
+                .map((s: string) => parseInt(s.trim(), 10))
+                .filter((n: number) => !Number.isNaN(n))
+                .sort((a: number, b: number) => a - b); // Sort numbers ascending
+
+            if (nums.length === 0) return match;
+            return `[${nums.join(',')}]`;
+        });
+    }, [answer]);
+
     // Normalize labels and build lookup maps
     const { normalizedCitations, citationMap, sourceMap, citationSourceMap } = useMemo(() => {
         const normalizeLabel = (label: string): string => {
@@ -74,7 +89,7 @@ export function MarkdownWithCitations({
         // Reset regex lastIndex to ensure we scan from the beginning
         citationRegex.lastIndex = 0;
 
-        while ((match = citationRegex.exec(answer)) !== null) {
+        while ((match = citationRegex.exec(processedAnswer)) !== null) {
             match[1]
                 .split(',')
                 .map((s) => parseInt(s.trim(), 10))
@@ -84,16 +99,34 @@ export function MarkdownWithCitations({
 
         // Get unique citations by number (deduplicated)
         const citationByNum = new Map<number, CitationData>();
-        normalizedCitations.forEach((c) => {
-            const numStr = (c.label || '').replace(/[\[\]]/g, '').trim();
-            const num = parseInt(numStr, 10);
-            if (!Number.isNaN(num) && usedNums.has(num)) {
-                // Only add if we haven't seen this citation number before
-                if (!citationByNum.has(num)) {
-                    citationByNum.set(num, c);
+
+        // If no inline citations found but we have citations array, show all of them
+        // This handles cases where LLM doesn't generate inline citations but backend preserved them
+        if (usedNums.size === 0 && normalizedCitations.length > 0) {
+            // No inline citations found - include all citations from the array
+            normalizedCitations.forEach((c) => {
+                const numStr = (c.label || '').replace(/[\[\]]/g, '').trim();
+                const num = parseInt(numStr, 10);
+                if (!Number.isNaN(num)) {
+                    // Only add if we haven't seen this citation number before
+                    if (!citationByNum.has(num)) {
+                        citationByNum.set(num, c);
+                    }
                 }
-            }
-        });
+            });
+        } else {
+            // Only include citations that are actually used in the answer text
+            normalizedCitations.forEach((c) => {
+                const numStr = (c.label || '').replace(/[\[\]]/g, '').trim();
+                const num = parseInt(numStr, 10);
+                if (!Number.isNaN(num) && usedNums.has(num)) {
+                    // Only add if we haven't seen this citation number before
+                    if (!citationByNum.has(num)) {
+                        citationByNum.set(num, c);
+                    }
+                }
+            });
+        }
 
         // Convert to sorted array by citation number
         const sorted = Array.from(citationByNum.entries())
@@ -101,12 +134,27 @@ export function MarkdownWithCitations({
             .map(([, citation]) => citation);
 
         return { uniqueCitations: sorted };
-    }, [answer, normalizedCitations]);
+    }, [processedAnswer, normalizedCitations]);
 
     // Inline text renderer to replace [N] markers with badges
-    const TextWithCitations = ({ children }: { children?: string }) => {
-        const text = typeof children === 'string' ? children : '';
-        if (!text) return <>{children}</>;
+    // react-markdown text component signature
+    const TextWithCitations: ElementType = ({ children, ...props }: ComponentPropsWithoutRef<'span'>) => {
+        // Extract text from children (handle both string and ReactNode)
+        let text = '';
+        if (typeof children === 'string') {
+            text = children;
+        } else if (Array.isArray(children)) {
+            text = children
+                .map(child => (typeof child === 'string' ? child : ''))
+                .join('');
+        } else if (children && typeof children === 'object' && 'props' in children) {
+            const childProps = (children as { props?: { children?: React.ReactNode } }).props;
+            if (childProps?.children && typeof childProps.children === 'string') {
+                text = childProps.children;
+            }
+        }
+
+        if (!text) return <span {...props}>{children}</span>;
 
         const parts: React.ReactNode[] = [];
         let lastIndex = 0;
@@ -128,49 +176,43 @@ export function MarkdownWithCitations({
             if (nums.length === 0) {
                 parts.push(match[0]);
             } else {
-                parts.push(
-                    <span key={match.index} className="inline-flex items-center gap-1 whitespace-nowrap">
-                        {nums.map((n, idx) => {
-                            const citation = citationMap.get(n);
-                            const source =
-                                citation?.chunk_id
-                                    ? sourceMap.get(citation.chunk_id) || citationSourceMap.get(citation.chunk_id) || null
-                                    : null;
+                // Render as a single combined citation badge [1,2] instead of separate [1], [2]
+                const sortedCitationText = `[${nums.join(',')}]`;
+                const firstCitation = nums.length > 0 ? citationMap.get(nums[0]) : null;
+                const firstSource = firstCitation?.chunk_id
+                    ? sourceMap.get(firstCitation.chunk_id) || citationSourceMap.get(firstCitation.chunk_id) || null
+                    : null;
 
-                            if (citation) {
-                                return (
-                                    <span key={idx} className="inline-flex items-center whitespace-nowrap">
-                                        <HoverCard openDelay={200} closeDelay={100}>
-                                            <HoverCardTrigger>
-                                                <span className="mx-0.5 cursor-pointer text-xs text-muted-foreground align-baseline hover:text-foreground transition-colors underline decoration-dotted underline-offset-2">
-                                                    [{n}]
-                                                </span>
-                                            </HoverCardTrigger>
-                                            <HoverCardContent className="w-96 p-4 max-h-[70vh] overflow-y-auto">
-                                                <UnifiedCitationModal
-                                                    citation={citation}
-                                                    source={source || undefined}
-                                                    allCitations={normalizedCitations}
-                                                    responseType={responseType}
-                                                />
-                                            </HoverCardContent>
-                                        </HoverCard>
-                                        {idx < nums.length - 1 && ','}
+                if (firstCitation) {
+                    parts.push(
+                        <span key={match.index} className="inline-flex items-center whitespace-nowrap">
+                            <HoverCard openDelay={200} closeDelay={100}>
+                                <HoverCardTrigger>
+                                    <span className="mx-0.5 cursor-pointer text-xs text-muted-foreground align-baseline hover:text-foreground transition-colors underline decoration-dotted underline-offset-2">
+                                        {sortedCitationText}
                                     </span>
-                                );
-                            }
-
-                            return (
-                                <span key={idx} className="inline-flex items-center whitespace-nowrap">
-                                    <span className="mx-0.5 text-xs text-muted-foreground align-baseline">
-                                        [{n}]
-                                    </span>
-                                    {idx < nums.length - 1 && ','}
-                                </span>
-                            );
-                        })}
-                    </span>
-                );
+                                </HoverCardTrigger>
+                                <HoverCardContent className="w-96 p-4 max-h-[70vh] overflow-y-auto">
+                                    <UnifiedCitationModal
+                                        citation={firstCitation}
+                                        source={firstSource || undefined}
+                                        allCitations={normalizedCitations}
+                                        responseType={responseType}
+                                    />
+                                </HoverCardContent>
+                            </HoverCard>
+                        </span>
+                    );
+                } else {
+                    // Fallback: render as plain text if citation not found
+                    parts.push(
+                        <span key={match.index} className="inline-flex items-center whitespace-nowrap">
+                            <span className="mx-0.5 text-xs text-muted-foreground align-baseline">
+                                {sortedCitationText}
+                            </span>
+                        </span>
+                    );
+                }
             }
 
             lastIndex = match.index + match[0].length;
@@ -195,7 +237,7 @@ export function MarkdownWithCitations({
                     },
                 }}
             >
-                {answer}
+                {processedAnswer}
             </Response>
 
             {/* REFERENCES Section - Numbered List */}
@@ -207,8 +249,17 @@ export function MarkdownWithCitations({
                     <ol className="space-y-1 list-decimal list-inside">
                         {uniqueCitations.map((citation) => {
                             const citationNum = parseInt((citation.label || '').replace(/[\[\]]/g, '').trim(), 10);
-                            const pageNum = typeof citation.page === 'string' ? parseInt(citation.page, 10) : citation.page;
-                            const pageDisplay = !Number.isNaN(pageNum) && pageNum > 0 ? `Page ${pageNum}` : 'Page N/A';
+
+                            // Format page number: handle "0", "unknown", "N/A", or actual page numbers
+                            let pageDisplay = 'page unknown';
+                            if (citation.page === '0') {
+                                pageDisplay = 'page 0';
+                            } else if (citation.page && citation.page !== 'unknown' && citation.page !== 'N/A') {
+                                const pageNum = typeof citation.page === 'string' ? parseInt(citation.page, 10) : citation.page;
+                                if (!Number.isNaN(pageNum) && pageNum > 0) {
+                                    pageDisplay = `page ${pageNum}`;
+                                }
+                            }
 
                             const source =
                                 citation?.chunk_id
