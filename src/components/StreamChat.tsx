@@ -56,6 +56,7 @@ type ChatMessage = {
     documentsAnalyzed?: number;
     hasRelevantInformation?: boolean;
     intent?: 'factual' | 'list' | 'summary' | 'comparison' | 'analytical' | 'definition';
+    documentCount?: number; // Store document count for status message determination
 };
 
 
@@ -506,6 +507,29 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
         return false;
     }, []);
 
+    // Helper function to determine status message based on document selection
+    const getStatusMessage = useCallback((selectedDocs: Document[], question: string, docs: Document[]): string => {
+        let documentCount = 0;
+
+        // Priority 1: Use selected documents if any
+        if (selectedDocs.length > 0) {
+            documentCount = selectedDocs.length;
+        } else {
+            // Priority 2: Extract from @- tags in question
+            const documentIds = extractDocumentIdFromQuestion(question, docs);
+            documentCount = documentIds.length;
+        }
+
+        // Determine status message based on document count
+        if (documentCount === 1) {
+            return 'searching and analysing single document';
+        } else if (documentCount > 1) {
+            return `searching and analysing ${documentCount} documents`;
+        } else {
+            return 'searching and analysing all documents';
+        }
+    }, [extractDocumentIdFromQuestion]);
+
     const handleStreamChat = useCallback(async (question: string, messageId?: string, chatIdForSaving?: string) => {
         const targetMessageId = messageId || streamingMessageId;
         const activeChatId = chatIdForSaving || currentChatId;
@@ -625,19 +649,49 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
                                 });
 
                             } else if (data.type === 'status') {
-                                // Update status message
-                                setMessages(prev => prev.map(msg => {
-                                    if (msg.id === targetMessageId) {
-                                        return {
-                                            ...msg,
-                                            status: data.message
-                                        };
+                                // Update status message with mode-based message instead of server message
+                                setMessages(prev => {
+                                    const currentMessage = prev.find(msg => msg.id === targetMessageId);
+                                    const currentIndex = prev.findIndex(msg => msg.id === targetMessageId);
+
+                                    // Use stored documentCount if available, otherwise determine from previous user message
+                                    let modeBasedStatus: string;
+                                    if (currentMessage?.documentCount !== undefined) {
+                                        if (currentMessage.documentCount === 1) {
+                                            modeBasedStatus = 'searching and analysing single document';
+                                        } else if (currentMessage.documentCount > 1) {
+                                            modeBasedStatus = `searching and analysing ${currentMessage.documentCount} documents`;
+                                        } else {
+                                            modeBasedStatus = 'searching and analysing all documents';
+                                        }
+                                    } else {
+                                        const previousUserMessage = currentIndex > 0 ? prev[currentIndex - 1] : null;
+                                        const userQuestion = previousUserMessage?.role === 'user' ? previousUserMessage.content : '';
+                                        modeBasedStatus = getStatusMessage([], userQuestion, documents);
                                     }
-                                    return msg;
-                                }));
+
+                                    return prev.map(msg => {
+                                        if (msg.id === targetMessageId) {
+                                            return {
+                                                ...msg,
+                                                status: modeBasedStatus
+                                            };
+                                        }
+                                        return msg;
+                                    });
+                                });
 
                             } else if (data.type === 'done') {
                                 // Mark streaming as complete
+                                console.log('Received done event:', {
+                                    hasCitations: !!data.citations,
+                                    citationsCount: data.citations?.length || 0,
+                                    hasSources: !!data.sources,
+                                    sourcesCount: data.sources?.length || 0,
+                                    fullResponseLength: data.full_response?.length || 0,
+                                    responseType: data.response_type
+                                });
+
                                 let finalContent = '';
                                 let finalSources: Array<SourceData> = [];
                                 let finalCitations: Array<CitationData> = [];
@@ -667,10 +721,30 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
                                 };
 
                                 // Normalize citations from 'done' event - this is the authoritative source
-                                const citationsFromDone = (data.citations || []).map((cite: CitationData) => ({
-                                    ...cite,
-                                    label: normalizeCitationLabel(cite.label || '')
-                                }));
+                                let citationsFromDone: Array<CitationData> = [];
+
+                                if (data.citations && data.citations.length > 0) {
+                                    // Use citations if provided
+                                    citationsFromDone = (data.citations || []).map((cite: CitationData) => ({
+                                        ...cite,
+                                        label: normalizeCitationLabel(cite.label || '')
+                                    }));
+                                    console.log('Using citations from data.citations:', citationsFromDone.length);
+                                } else if (data.sources && data.sources.length > 0) {
+                                    // Fallback: Extract citations from sources if citations array is not provided
+                                    // Sources with labels are actually citations
+                                    citationsFromDone = (data.sources || [])
+                                        .filter((source: SourceData & { label?: string; document_id?: string }) => source.label) // Only sources with labels
+                                        .map((source: SourceData & { label?: string; document_id?: string }) => ({
+                                            label: normalizeCitationLabel(source.label || ''),
+                                            pdf_name: source.pdf_name || '',
+                                            page: String(source.page || ''),
+                                            chunk_id: source.chunk_id || '',
+                                            score: source.score || 0,
+                                            chunk_text: source.chunk_text
+                                        } as CitationData));
+                                    console.log('Extracted citations from sources:', citationsFromDone.length);
+                                }
 
                                 // Set finalCitations BEFORE setMessages to ensure it's available for saving
                                 finalCitations = citationsFromDone;
@@ -769,7 +843,18 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
                                     sourcesCount: finalSources?.length,
                                     sources: finalSources,
                                     citationsCount: finalCitations?.length,
-                                    finalCitations: finalCitations
+                                    finalCitations: finalCitations,
+                                    citationsPreview: finalCitations.slice(0, 3).map(c => ({ label: c.label, pdf_name: c.pdf_name }))
+                                });
+
+                                // Log final message state for debugging
+                                console.log('Final message state:', {
+                                    hasCitations: finalCitations.length > 0,
+                                    citationsCount: finalCitations.length,
+                                    hasSources: finalSources.length > 0,
+                                    sourcesCount: finalSources.length,
+                                    isStreaming: false, // Should be false to unblock UI
+                                    hasContent: !!finalContent
                                 });
 
                                 if (activeChatId && finalContent && targetMessageId) {
@@ -874,7 +959,7 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
 
             fallbackTimeoutRef.current.set(targetMessageId, timeoutId);
         }
-    }, [userId, streamingMessageId, currentChatId, saveAssistantMessage, hasDocumentTag, documents, extractDocumentIdFromQuestion, selectedDocuments]);
+    }, [userId, streamingMessageId, currentChatId, saveAssistantMessage, hasDocumentTag, documents, extractDocumentIdFromQuestion, selectedDocuments, getStatusMessage]);
 
     // Helper function to check if input has actual question text (not just document tags)
     const hasQuestionText = useCallback((text: string, docs: Document[]): boolean => {
@@ -1048,13 +1133,24 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
 
         // Create assistant message placeholder
         const targetMessageId = nanoid();
+        // Determine document count for status message
+        let documentCount = 0;
+        if (selectedDocuments.length > 0) {
+            documentCount = selectedDocuments.length;
+        } else {
+            const documentIds = extractDocumentIdFromQuestion(question, documents);
+            documentCount = documentIds.length;
+        }
+        // Determine status message based on document selection
+        const statusMessage = getStatusMessage(selectedDocuments, question, documents);
         const assistantMessage: ChatMessage = {
             id: targetMessageId,
             content: '',
             role: 'assistant',
             timestamp: new Date(),
             isStreaming: true,
-            status: 'Thinking...'
+            status: statusMessage,
+            documentCount: documentCount // Store document count for later use
         };
 
         setMessages(prev => [...prev, assistantMessage]);
@@ -1067,7 +1163,7 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
         // Start streaming with the specific message ID and chat ID
         console.log('About to start streaming:', { question, targetMessageId, activeChatId });
         handleStreamChat(question, targetMessageId, activeChatId);
-    }, [inputValue, isTyping, handleStreamChat, currentChatId, userId, user, hasQuestionTextResult]);
+    }, [inputValue, isTyping, handleStreamChat, currentChatId, userId, user, hasQuestionTextResult, getStatusMessage, extractDocumentIdFromQuestion, selectedDocuments, documents]);
 
     return (
         <div className="flex w-full h-full flex-col overflow-hidden border bg-background">
@@ -1086,7 +1182,25 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
                                     ) : message.isStreaming && message.content === '' ? (
                                         <div className="flex items-center gap-2">
                                             <Loader size={14} />
-                                            <span className="text-muted-foreground text-sm">Thinking...</span>
+                                            <span className="text-muted-foreground text-sm">
+                                                {(() => {
+                                                    // Use stored documentCount if available, otherwise determine from previous user message
+                                                    if (message.documentCount !== undefined) {
+                                                        if (message.documentCount === 1) {
+                                                            return 'searching and analysing single document';
+                                                        } else if (message.documentCount > 1) {
+                                                            return `searching and analysing ${message.documentCount} documents`;
+                                                        } else {
+                                                            return 'searching and analysing all documents';
+                                                        }
+                                                    }
+                                                    // Fallback: determine status from previous user message
+                                                    const messageIndex = messages.findIndex(m => m.id === message.id);
+                                                    const previousUserMessage = messageIndex > 0 ? messages[messageIndex - 1] : null;
+                                                    const userQuestion = previousUserMessage?.role === 'user' ? previousUserMessage.content : '';
+                                                    return getStatusMessage([], userQuestion, documents);
+                                                })()}
+                                            </span>
                                         </div>
                                     ) : message.role === 'assistant' ? (
                                         // Determine if this is an all-documents query by checking the previous user message
