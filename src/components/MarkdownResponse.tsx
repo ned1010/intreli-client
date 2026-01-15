@@ -1,6 +1,5 @@
 'use client';
 
-import { Response } from '@/components/ui/shadcn-io/ai/response';
 import { CitationData, SourceData } from '@/types/types';
 import { AcademicSynthesisResponse } from '@/components/AcademicSynthesisResponse';
 

@@ -93,7 +93,7 @@ export function Dropzone({ className = "" }: DropzoneProps) {
                 fileInputRef.current.value = '';
             }
         },
-        onError: (error: Error & { response?: { status?: number; data?: { message?: string } } }, file) => {
+        onError: (error: Error & { response?: { status?: number; data?: { message?: string } } }) => {
             // Dismiss loading toast
             toast.dismiss();
 
@@ -179,9 +179,13 @@ export function Dropzone({ className = "" }: DropzoneProps) {
 
             toast.success('Document upload cancelled');
             queryClient.invalidateQueries({ queryKey: ['documents', user?.id] });
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('Error cancelling document:', error);
-            const errorMessage = error?.response?.data?.message || error.message || 'Failed to cancel upload';
+            const errorMessage = error && typeof error === 'object' && 'response' in error
+                ? (error as { response?: { data?: { message?: string } }; message?: string }).response?.data?.message || (error as { message?: string }).message
+                : error instanceof Error
+                ? error.message
+                : 'Failed to cancel upload';
             toast.error('Failed to cancel: ' + errorMessage);
             
             // Reset cancelling state on error

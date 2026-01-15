@@ -62,7 +62,7 @@ export function DocumentAutocomplete({
       dropdown.style.top = `${cursorY}px`;
       
       // Force a reflow to get accurate dimensions
-      dropdown.offsetHeight;
+      void dropdown.offsetHeight;
       
       // Adjust if dropdown would go off-screen
       const dropdownRect = dropdown.getBoundingClientRect();
@@ -141,7 +141,7 @@ export function DocumentAutocomplete({
       window.removeEventListener('scroll', handleScroll, true);
       window.removeEventListener('resize', handleResize);
     };
-  }, [isOpen, textareaRef, triggerPosition?.end]);
+  }, [isOpen, textareaRef, triggerPosition]);
 
   // Scroll selected item into view
   useEffect(() => {

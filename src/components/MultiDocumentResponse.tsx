@@ -3,9 +3,8 @@
 import { Badge } from '@/components/ui/badge';
 import { DocumentSummaryCard } from '@/components/ui/DocumentSummaryCard';
 import { AcademicSynthesisResponse } from '@/components/AcademicSynthesisResponse';
-import { cn } from '@/lib/utils';
 import { FileText } from 'lucide-react';
-import { DocumentSummary, ChunkDetail, CitationData, SourceData } from '@/types/types';
+import { DocumentSummary, CitationData, SourceData } from '@/types/types';
 
 interface MultiDocumentResponseProps {
     answer: string;
@@ -20,8 +19,6 @@ interface MultiDocumentResponseProps {
 export function MultiDocumentResponse({
     answer,
     documentSummaries,
-    totalDocuments,
-    documentsAnalyzed,
     sources = [],
     citations = [],
     onViewDocumentSources
@@ -37,15 +34,15 @@ export function MultiDocumentResponse({
                 return !/no\s+relevant\s+information\s+found/i.test(trimmed);
             });
 
-    // Group sources by document for filtering
-    const sourcesByDocument = sources.reduce((acc, source) => {
-        const docName = source.pdf_name || 'Unknown';
-        if (!acc[docName]) {
-            acc[docName] = [];
-        }
-        acc[docName].push(source);
-        return acc;
-    }, {} as Record<string, typeof sources>);
+    // Group sources by document for filtering (currently unused but may be needed for future filtering)
+    // const sourcesByDocument = sources.reduce((acc, source) => {
+    //     const docName = source.pdf_name || 'Unknown';
+    //     if (!acc[docName]) {
+    //         acc[docName] = [];
+    //     }
+    //     acc[docName].push(source);
+    //     return acc;
+    // }, {} as Record<string, typeof sources>);
 
     return (
         <div className="space-y-4">

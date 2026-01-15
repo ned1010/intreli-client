@@ -3,11 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  Plus,
   MessageSquare,
   Upload,
   Settings,
-  HelpCircle,
   Search,
   Zap,
   Users,
@@ -185,19 +183,19 @@ export default function FloatingActionButton({
     };
   }, [isOpen, actions, toggleFAB, handleActionClick]);
 
-  const getActionPosition = (index: number) => {
-    // Use vertical dropdown positioning to keep items on screen
-    const spacing = 60; // Space between items
-    const direction = position.includes('bottom') ? -1 : 1; // Up for bottom position, down for top
-    const offset = (index + 1) * spacing * direction;
+  // const getActionPosition = (index: number) => {
+  //   // Use vertical dropdown positioning to keep items on screen
+  //   const spacing = 60; // Space between items
+  //   const direction = position.includes('bottom') ? -1 : 1; // Up for bottom position, down for top
+  //   const offset = (index + 1) * spacing * direction;
 
-    return {
-      transform: isOpen
-        ? `translateY(${offset}px) scale(1)`
-        : 'translateY(0) scale(0)',
-      opacity: isOpen ? 1 : 0
-    };
-  };
+  //   return {
+  //     transform: isOpen
+  //       ? `translateY(${offset}px) scale(1)`
+  //       : 'translateY(0) scale(0)',
+  //     opacity: isOpen ? 1 : 0
+  //   };
+  // };
 
   return (
     <TooltipProvider>

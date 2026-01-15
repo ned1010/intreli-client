@@ -38,8 +38,6 @@ export const PromptInputTextarea = React.forwardRef<HTMLTextAreaElement, PromptI
   onChange,
   className,
   placeholder = 'What would you like to know?',
-  minHeight = 48,
-  maxHeight = 164,
   onCursorPositionChange,
   onAutocompleteKeyDown,
   documents = [],

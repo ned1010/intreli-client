@@ -86,10 +86,11 @@ export function MarkdownWithCitations({
     const { uniqueCitations } = useMemo(() => {
         const usedNums = new Set<number>();
         let match: RegExpExecArray | null;
-        // Reset regex lastIndex to ensure we scan from the beginning
-        citationRegex.lastIndex = 0;
+        // Create a new regex instance to avoid modifying the shared regex
+        const regex = new RegExp(citationRegex.source, citationRegex.flags);
+        regex.lastIndex = 0;
 
-        while ((match = citationRegex.exec(processedAnswer)) !== null) {
+        while ((match = regex.exec(processedAnswer)) !== null) {
             match[1]
                 .split(',')
                 .map((s) => parseInt(s.trim(), 10))

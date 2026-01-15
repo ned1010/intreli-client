@@ -1,8 +1,7 @@
 'use client';
 
 import { CitationData, SourceData } from '@/types/types';
-import { Badge } from '@/components/ui/badge';
-import { FileText, Layers } from 'lucide-react';
+import { FileText } from 'lucide-react';
 
 interface UnifiedCitationModalProps {
     citation: CitationData;
@@ -14,8 +13,6 @@ interface UnifiedCitationModalProps {
 export function UnifiedCitationModal({
     citation,
     source,
-    allCitations = [],
-    responseType
 }: UnifiedCitationModalProps) {
     // Get relevance text - prefer relevance_text (merged/structured), fallback to chunk_text
     // Backend may include relevance_text or chunk_text in citations

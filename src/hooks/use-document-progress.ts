@@ -81,13 +81,16 @@ export function useDocumentProgress(
                         return;
                     }
                 }
-            } catch (err: any) {
+            } catch (err: unknown) {
                 // Don't update state if cancelled
                 if (isCancelled) {
                     return;
                 }
                 console.error('Error polling document status:', err);
-                setError(err?.response?.data?.message || 'Failed to fetch document status');
+                const errorMessage = err && typeof err === 'object' && 'response' in err
+                    ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+                    : 'Failed to fetch document status';
+                setError(errorMessage || 'Failed to fetch document status');
                 // Continue polling on error (with exponential backoff could be added)
             } finally {
                 if (!isCancelled) {

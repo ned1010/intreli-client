@@ -39,8 +39,7 @@ export function DocumentTagInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const internalContainerRef = useRef<HTMLDivElement>(null);
   const containerRef = externalContainerRef || internalContainerRef;
-  const [cursorPosition, setCursorPosition] = useState(0);
-  const [selectionStart, setSelectionStart] = useState(0);
+  const [, setCursorPosition] = useState(0);
 
   // Parse document tags from value - only include tags that match actual documents
   const parseDocumentTags = useCallback((text: string): DocumentTag[] => {
@@ -95,7 +94,6 @@ export function DocumentTagInput({
 
     const textarea = e.currentTarget;
     const cursorPos = textarea.selectionStart;
-    const selectionEnd = textarea.selectionEnd;
 
     // Handle arrow keys to skip over tags
     if (e.key === 'ArrowLeft' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
@@ -299,7 +297,6 @@ export function DocumentTagInput({
   const handleSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
     const textarea = e.currentTarget;
     const pos = textarea.selectionStart;
-    const end = textarea.selectionEnd;
     
     // Check if selection is inside a tag
     const tag = findTagAtPosition(pos, documentTags);
@@ -310,7 +307,6 @@ export function DocumentTagInput({
           const newPos = tag.start;
           textareaRef.current.setSelectionRange(newPos, newPos);
           setCursorPosition(newPos);
-          setSelectionStart(newPos);
           if (onCursorPositionChange) {
             onCursorPositionChange(newPos);
           }
@@ -320,13 +316,12 @@ export function DocumentTagInput({
     }
     
     setCursorPosition(pos);
-    setSelectionStart(pos);
     if (onCursorPositionChange) {
       onCursorPositionChange(pos);
     }
   };
 
-  const handleClick = (e: React.MouseEvent<HTMLTextAreaElement>) => {
+  const handleClick = () => {
     setTimeout(() => {
       if (textareaRef.current) {
         const pos = textareaRef.current.selectionStart;
@@ -336,18 +331,16 @@ export function DocumentTagInput({
           // Move cursor to before the tag
           const newPos = tag.start;
           textareaRef.current.setSelectionRange(newPos, newPos);
-          setCursorPosition(newPos);
           if (onCursorPositionChange) {
             onCursorPositionChange(newPos);
           }
         } else {
-          setCursorPosition(pos);
           if (onCursorPositionChange) {
             onCursorPositionChange(pos);
           }
         }
       }
-    }, 0);
+    });
   };
 
 

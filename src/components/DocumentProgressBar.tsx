@@ -2,7 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Loader2, CheckCircle2, ExternalLink, X, AlertCircle } from "lucide-react";
+import { Loader2, CheckCircle2, ExternalLink, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface DocumentProgressBarProps {

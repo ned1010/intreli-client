@@ -1,4 +1,4 @@
-import { Calendar, Book, Inbox, MessageSquare, Search, Settings, DollarSign, LogOut, ChevronDown } from "lucide-react"
+import { Book, Settings, DollarSign, LogOut, MessageSquare } from "lucide-react"
 import { ReactNode } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { nanoid } from "nanoid"
@@ -14,7 +14,6 @@ import {
     SidebarMenu,
     SidebarMenuButton,
     SidebarMenuItem,
-    SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { SignOutButton } from "@clerk/nextjs";
 import { ChatListItem } from "@/components/ChatListItem";
@@ -119,7 +118,7 @@ export function AppSidebar({ user, userButton, userId }: AppSidebarProps) {
 
     };
 
-    const isOpen = true; // static open view for UI preview
+    // const isOpen = true; // static open view for UI preview
 
     // console.log('user', user)
     return (
