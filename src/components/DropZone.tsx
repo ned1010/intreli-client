@@ -332,7 +332,7 @@ export function Dropzone({ className = "" }: DropzoneProps) {
                                     <Presentation className="w-3 h-3" /> PowerPoint
                                 </div>
                                 <div className="flex items-center gap-1">
-                                    <Image className="w-3 h-3" /> Images
+                                    <Image className="w-3 h-3" aria-hidden="true" /> Images
                                 </div>
                                 <div className="flex items-center gap-1">
                                     <File className="w-3 h-3" /> Text, Markdown

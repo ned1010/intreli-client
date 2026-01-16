@@ -276,6 +276,18 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
         documentNameInsertedRef.current = false;
     }, [chatId]);
 
+    // Safety mechanism: Auto-reset isTyping if it's stuck for too long
+    useEffect(() => {
+        if (isTyping) {
+            const timeoutId = setTimeout(() => {
+                console.warn('isTyping was stuck for 60 seconds, auto-resetting');
+                setIsTyping(false);
+                setStreamingMessageId(null);
+            }, 60000); // 60 second safety timeout
+            return () => clearTimeout(timeoutId);
+        }
+    }, [isTyping, streamingMessageId]);
+
     // Load chat messages when chatId changes
     useEffect(() => {
         const loadChatMessages = async () => {
@@ -291,10 +303,7 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
                         content: "Welcome! I'm Intreli, your personalised AI assistant. Ask me questions about any of your information base and I'll provide detailed answers with insights and explanations.",
                         role: 'assistant',
                         timestamp: new Date(),
-                        sources: [
-                            // { chunk_text: "Getting Started Guide", page: "#" },
-                            // { chunk_text: "API Documentation", page: "#" }
-                        ]
+                        responseType: 'single_document',
                     }
                 ]);
                 setCurrentChatId(null);
@@ -380,6 +389,7 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
                                 content: "Welcome! I'm Intreli, your personalised AI assistant. Ask me questions about any of your information base and I'll provide detailed answers with insights and explanations.",
                                 role: 'assistant',
                                 timestamp: new Date(),
+                                responseType: 'single_document',
                             }
                         ]);
                     }
@@ -393,6 +403,7 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
                             content: "Welcome! I'm Intreli, your personalised AI assistant. Ask me questions about any of your information base and I'll provide detailed answers with insights and explanations.",
                             role: 'assistant',
                             timestamp: new Date(),
+                            responseType: 'single_document',
                         }
                     ]);
                     setCurrentChatId(chatId); // Keep the chatId so new messages will be saved to it
@@ -406,6 +417,7 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
                         content: "Welcome! I'm Intreli, your personalised AI assistant. Ask me questions about any of your information base and I'll provide detailed answers with insights and explanations.",
                         role: 'assistant',
                         timestamp: new Date(),
+                        responseType: 'single_document',
                     }
                 ]);
                 setCurrentChatId(chatId);
@@ -592,6 +604,28 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) {
+                    // CRITICAL: If stream ends without 'done' event, reset typing state
+                    // Process final chunk if it exists before breaking
+                    if (value) {
+                        const finalChunk = decoder.decode(value, { stream: true });
+                        const finalLines = finalChunk.split('\n');
+                        for (const line of finalLines) {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const data = JSON.parse(line.slice(6));
+                                    if (data.type === 'done') {
+                                        // Don't break yet - let the normal done handler process it
+                                        // But we'll process it in the normal flow below
+                                    }
+                                } catch {
+                                    // Ignore parse errors in final chunk
+                                }
+                            }
+                        }
+                    }
+                    // Reset typing state regardless - the done handler will also reset it, but this ensures it's reset
+                    setIsTyping(false);
+                    setStreamingMessageId(null);
                     break;
                 }
 
@@ -858,19 +892,24 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
                                 });
 
                                 if (activeChatId && finalContent && targetMessageId) {
-                                    await saveAssistantMessage(
-                                        targetMessageId,
-                                        activeChatId,
-                                        finalContent,
-                                        finalReasoning,
-                                        finalSources,
-                                        finalCitations,
-                                        finalResponseType,
-                                        finalDocumentSummaries,
-                                        finalTotalDocuments,
-                                        finalDocumentsAnalyzed,
-                                        finalHasRelevantInformation
-                                    );
+                                    try {
+                                        await saveAssistantMessage(
+                                            targetMessageId,
+                                            activeChatId,
+                                            finalContent,
+                                            finalReasoning,
+                                            finalSources,
+                                            finalCitations,
+                                            finalResponseType,
+                                            finalDocumentSummaries,
+                                            finalTotalDocuments,
+                                            finalDocumentsAnalyzed,
+                                            finalHasRelevantInformation
+                                        );
+                                    } catch (saveError) {
+                                        console.error('Failed to save message after done event:', saveError);
+                                        // Don't reset isTyping here as it's already false - just log
+                                    }
                                 } else {
                                     console.log('Skipping save - missing required data:', {
                                         hasActiveChatId: !!activeChatId,
@@ -901,6 +940,9 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
                             }
                         } catch (e) {
                             console.error('Failed to parse JSON:', e, line);
+                            // CRITICAL: Reset typing state on parse errors to prevent input lock
+                            setIsTyping(false);
+                            setStreamingMessageId(null);
                         }
                     }
                 }
@@ -1204,10 +1246,17 @@ const StreamChat = ({ chatId, userId, documentName }: ChatInterfaceProps) => {
                                         </div>
                                     ) : message.role === 'assistant' ? (
                                         // Determine if this is an all-documents query by checking the previous user message
+                                        // Skip multi-document response for welcome messages (no previous user message)
                                         (() => {
                                             const messageIndex = messages.findIndex(m => m.id === message.id);
                                             const previousUserMessage = messageIndex > 0 ? messages[messageIndex - 1] : null;
-                                            const userQuestion = previousUserMessage?.role === 'user' ? previousUserMessage.content : '';
+
+                                            // If there's no previous user message, it's likely a welcome message - use single document response
+                                            if (!previousUserMessage || previousUserMessage.role !== 'user') {
+                                                return false;
+                                            }
+
+                                            const userQuestion = previousUserMessage.content;
                                             const isAllDocumentsQuery = !hasDocumentTag(userQuestion, documents);
 
                                             // Show multi-document response if:

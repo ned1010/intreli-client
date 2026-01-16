@@ -13,6 +13,20 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  {
+    rules: {
+      // Show errors during development - allow unused vars with underscore prefix
+      '@typescript-eslint/no-unused-vars': ['error', { 
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_'
+      }],
+      // Only require alt text for actual img elements, not icon components
+      'jsx-a11y/alt-text': ['error', {
+        elements: ['img', 'object', 'area', 'input[type="image"]'],
+      }],
+    }
+  }
 ]);
 
 export default eslintConfig;

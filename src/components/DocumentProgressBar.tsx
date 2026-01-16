@@ -18,7 +18,6 @@ interface DocumentProgressBarProps {
 }
 
 export function DocumentProgressBar({
-    documentId,
     fileName,
     status,
     progress,
